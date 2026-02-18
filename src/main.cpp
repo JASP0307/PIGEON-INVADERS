@@ -6,6 +6,7 @@
 #include "ServoModule.h"
 #include "IO_Points.h"
 #include "Laser.h"
+#include "SystemDefinitions.h"
 
 #define btSerial Serial1
 
@@ -15,10 +16,12 @@
 // Handles globales
 QueueHandle_t fsmQueue;
 QueueHandle_t servoQueue;
+QueueHandle_t manualControlQueue;
+
 SemaphoreHandle_t stateMutex;
 
-ServoModule SERVO_X(Pinout::BrazoDelta::SERVO_X);
-ServoModule SERVO_Y(Pinout::BrazoDelta::SERVO_Y);
+ServoModule SERVO_X(Pinout::ServoMotors::SERVO_X);
+ServoModule SERVO_Y(Pinout::ServoMotors::SERVO_Y);
 
 Laser Laser_01(Pinout::Laser::Laser_1);
 
@@ -223,12 +226,14 @@ void monitoringTimerCallback(TimerHandle_t xTimer) {
 
 
 void onEnterInit() {
+  Serial.println("Entrando en STATE_INITIALIZING");
   servos_init();
 }
 
 void onEnterIdle() {
-  //Serial.println("Entrando en IDLE");
+  Serial.println("Entrando en STATE_IDLE");
   //vTaskDelay(pdMS_TO_TICKS(1000));
+  Laser_01.off();
   digitalWrite(Pinout::TiraLED::LEDs, LOW);
   xTimerStop(monitoringTimer, 0);
 }
@@ -241,18 +246,34 @@ void onEnterAttacking(){
   xTimerStop(monitoringTimer, 0);
   
   // Lógica para elegir patrón aleatorio o rotativo
-  startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
+  PatternType p = (random() % 2 == 0) ? PATTERN_ZIGZAG_HORIZ : PATTERN_ZIGZAG_VERT;
   Laser_01.on();
   startPattern(p, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
 }
 void onEnterCalibSetLL(){
-  
+  Laser_01.on();
 }
 void onEnterCalibSetUR(){
-  
+  temp_X1 = SERVO_X.getPosition();
+  temp_Y1 = SERVO_Y.getPosition();
+        
+  Serial.println("Punto 1 capturado. Mueve al Punto 2.");
 }
 
 void onEnterCalibPrev(){
+  temp_X2 = SERVO_X.getPosition();
+  temp_Y2 = SERVO_Y.getPosition();
+  Serial.println("Punto 2 capturado.");
+
+  g_calibMinX = min(temp_X1, temp_X2);
+  g_calibMaxX = max(temp_X1, temp_X2);
+  
+  g_calibMinY = min(temp_Y1, temp_Y2);
+  g_calibMaxY = max(temp_Y1, temp_Y2);
+
+  Serial.printf("Calibracion Final: X[%f - %f], Y[%f - %f]\n", 
+                g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
+  vTaskDelay(pdMS_TO_TICKS(3000));  
   startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
 }
 
@@ -273,7 +294,7 @@ void TaskFSM(void *pvParameters) {
   onEnterInit();
 
   for (;;) {
-    if (xQueueReceive(fsmQueue, &receivedEvent, portMAX_DELAY))) {
+    if (xQueueReceive(fsmQueue, &receivedEvent, portMAX_DELAY)) {
       SystemState state = getState();
       
       newState = currentState; // Por defecto, no hay cambio de estado
@@ -312,14 +333,12 @@ void TaskFSM(void *pvParameters) {
             break;
         
         case STATE_CALIB_PREVIEW:
-            // El evento de fin de espera ahora viene de la cola
             if (receivedEvent == EVENT_CALIBRATION_DONE) newState = STATE_IDLE;
             break;
-        case ERROR_STATE:
+        case STATE_ERROR:
             if (receivedEvent == EVENT_RESUME) newState = STATE_IDLE;
             break;
       }
-    }
 
       // APLICAR CAMBIO DE ESTADO Y EJECUTAR ACCIÓN DE ENTRADA
       if (newState != currentState) {
@@ -355,12 +374,30 @@ void TaskServoControl(void *pvParameters) {
   patCtx.active = false;
   
   vTaskDelay(pdMS_TO_TICKS(1000));
-  
+  ManualPosCmd receivedCmd;
+
   for (;;) {
-    // 1. Calcular nuevos objetivos si estamos en modo automático (patrón)
-    updatePatternLogic();
-    
-    // 2. Mover los servos físicamente hacia el objetivo actual
+    // A. ¿Hay un patrón automático activo?
+    if (patCtx.active) {
+       updatePatternLogic();
+       xQueueReset(manualControlQueue); 
+    } 
+    // B. Si NO hay patrón, verificamos si hay comandos manuales
+    else {
+       // Revisamos la cola.
+       if (xQueueReceive(manualControlQueue, &receivedCmd, 0) == pdTRUE) {
+           
+           if (receivedCmd.cmdType == 0) {
+               // Comando para X
+               SERVO_X.setTarget((int)receivedCmd.value);
+           } else {
+               // Comando para Y
+               SERVO_Y.setTarget((int)receivedCmd.value);
+           }
+       }
+    }
+
+    // C. Mover los servos físicamente hacia el objetivo actual
     SERVO_X.update();
     SERVO_Y.update();
     vTaskDelay(pdMS_TO_TICKS(75)); 
@@ -378,13 +415,13 @@ void TaskComms(void *pvParameters) {
       String msg = Serial.readStringUntil('\n');
       msg.trim();
       
-      if (msg.equals("CMD,NAVIGATE")) {
-        FSMEvent e = EVENT_NAVIGATE;
+      if (msg.equals("CMD,START")) {
+        FSMEvent e = EVENT_START_COMMAND;
         xQueueSend(fsmQueue, &e, 0);
         //Serial.println("ACK,NAVIGATE");
       } 
       else if (msg.equals("CMD,STOP")) {
-        FSMEvent e = EVENT_STOP;
+        FSMEvent e = EVENT_STOP_COMMAND;
         xQueueSend(fsmQueue, &e, 0);
         //Serial.println("ACK,STOP");
       }
@@ -393,16 +430,31 @@ void TaskComms(void *pvParameters) {
         xQueueSend(fsmQueue, &e, 0);
         //Serial.println("ACK,RESUME");
       }
-      else if(msg.equals("NoRude")) {
-        FSMEvent e = EVENT_RAKE_WEED_FOUND;
-        xQueueSend(fsmQueue, &e, 0);
-        //Serial.println("ACK,RESUME");
-      }
-      else if (msg.startsWith("ATTACK,")) {
-        String indexStr = msg.substring(7); // "ATTACK," tiene 7 caracteres
-        int grid_index = indexStr.toInt();
+      else if (msg.equals("X:")) {
+          // Extraer el valor después de "X:"
+          String valStr = msg.substring(2); // 2 es la longitud de "X:"
+          ManualPosCmd cmd;
+          cmd.cmdType = 0; // 0 para Eje X
+          cmd.value = valStr.toInt();
 
+          // Enviar a la cola del Servo (no bloqueante)
+          xQueueSend(manualControlQueue, &cmd, 0);
+
+          Serial.println(cmd.value);
       }
+      else if (msg.equals("Y:")) {
+          // Extraer el valor después de "Y:"
+          String valStr = msg.substring(2); // 2 es la longitud de "Y:"
+          ManualPosCmd cmd;
+          cmd.cmdType = 1; // 1 para Eje Y
+          cmd.value = valStr.toInt();
+
+          // Enviar a la cola del Servo (no bloqueante)
+          xQueueSend(manualControlQueue, &cmd, 0);
+
+          Serial.println(cmd.value);
+      }
+      
       else {
         //Serial.println("ERROR,UNKNOWN_CMD");
       }
@@ -437,26 +489,53 @@ void TaskBluetoothCommunication(void *pvParameters) {
         incomingString.trim(); 
         if (incomingString == "START") {
           //Serial.println("DEBUG: Comando START recibido");
-          FSMEvent e = EVENT_NAVIGATE;
+          FSMEvent e = EVENT_START_COMMAND;
           xQueueSend(fsmQueue, &e, 0);
+
         } else if (incomingString == "STOP") {
           //Serial.println("DEBUG: Comando STOP recibido");
-          FSMEvent e = EVENT_STOP;
+          FSMEvent e = EVENT_STOP_COMMAND;
           xQueueSend(fsmQueue, &e, 0);
+
         } else if (incomingString.startsWith("X_POS:")) {
-          // Extraer el valor después de "YAW:"
-          String x_btcmdStr = incomingString.substring(6); // 6 es la longitud de "X_POS:"
-          int new_x_btcmd = x_btcmdStr.toInt();
-          setTargetYaw(newYaw); // Llamar a nuestra función segura
-          //Serial.print("DEBUG: Nuevo Yaw Objetivo establecido a -> ");
-          //Serial.println(newYaw);
+          // Extraer el valor después de "X_POS:"
+          String valStr = incomingString.substring(6); // 6 es la longitud de "X_POS:"
+          ManualPosCmd cmd;
+          cmd.cmdType = 0; // 0 para Eje X
+          cmd.value = valStr.toInt();
+
+          // Enviar a la cola del Servo (no bloqueante)
+          xQueueSend(manualControlQueue, &cmd, 0);
+
+          Serial.println(cmd.value);
+
         } else if (incomingString.startsWith("Y_POS:")) {
-          // Extraer el valor después de "YAW:"
-          String y_btcmdStr = incomingString.substring(6); // 6 es la longitud de "Y_POS:"
-          int new_y_btcmd = y_btcmdStr.toInt();
-          setTargetYaw(newYaw); // Llamar a nuestra función segura
-          //Serial.print("DEBUG: Nuevo Yaw Objetivo establecido a -> ");
-          //Serial.println(newYaw);
+          // Extraer el valor después de "Y_POS:"
+          String valStr = incomingString.substring(6); // 6 es la longitud de "Y_POS:"
+          ManualPosCmd cmd;
+          cmd.cmdType = 1; // 1 para Eje Y
+          cmd.value = valStr.toInt();
+
+          // Enviar a la cola del Servo (no bloqueante)
+          xQueueSend(manualControlQueue, &cmd, 0);
+
+          Serial.println(cmd.value);
+        } else if (incomingString == "CONFIRM_LL") {
+          Serial.println("DEBUG: Comando CONFIRM_LL recibido");
+          g_calibMinX = SERVO_X.getPosition();
+          g_calibMinY = SERVO_Y.getPosition();
+
+          FSMEvent e = EVENT_CONFIRM_POINT;
+          xQueueSend(fsmQueue, &e, 0);
+
+        } else if (incomingString == "CONFIRM_UR") {
+          Serial.println("DEBUG: Comando CONFIRM_UR recibido");
+          g_calibMaxX = SERVO_X.getPosition();
+          g_calibMaxY = SERVO_Y.getPosition();
+
+          FSMEvent e = EVENT_CONFIRM_POINT;
+          xQueueSend(fsmQueue, &e, 0);
+
         }
         incomingString = "";
       } else {
@@ -468,15 +547,10 @@ void TaskBluetoothCommunication(void *pvParameters) {
     if (millis() - lastTelemetrySendTime > TELEMETRY_INTERVAL_MS) {
       
       SystemState currentState = getState();
-      float currentVoltage = getBatteryVoltage();
 
       String stateStr = SystemStateToString(currentState);
       
-      char voltageBuffer[10]; // Buffer para convertir el float del voltaje
-      dtostrf(currentVoltage, 4, 2, voltageBuffer); // Formato: 4 caracteres en total, 2 decimales
-      String voltageStr = String(voltageBuffer);
-
-      String telemetryPacket = "STATE:" + stateStr + ":BATT:" + voltageStr;
+      String telemetryPacket = "STATE:" + stateStr;
 
       btSerial.println(telemetryPacket);
       //Serial.println("DEBUG: Enviando Telemetría -> " + telemetryPacket);

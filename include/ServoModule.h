@@ -14,7 +14,8 @@ public:
     
     void setTarget(int angle);           // Establece el ángulo objetivo
     bool update();                       // Actualiza la posición (suavizado/delay)
-    int getCurrentAngle();               // Devuelve el ángulo actual
+    int getPosition();               // Devuelve el ángulo actual
+    int getTarget();               // Devuelve el ángulo target actual
 
 private:
     // --- Miembros Privados ---

@@ -14,7 +14,8 @@ enum SystemState {
   STATE_ATTACKING,         // Láser ON, moviendo servos, reporte
   STATE_CALIB_SET_LL,      // Calibración: Esperando definir Límite Inferior Izquierdo
   STATE_CALIB_SET_UR,      // Calibración: Esperando definir Límite Superior Derecho
-  STATE_CALIB_PREVIEW      // Calibración: Dibujando recuadro para confirmación visual
+  STATE_CALIB_PREVIEW,      // Calibración: Dibujando recuadro para confirmación visual
+  STATE_ERROR
 };
 
 // =================================================================
@@ -32,26 +33,46 @@ typedef enum {
     EVENT_ATTACK_COMPLETE,       // Terminó el patrón de servos y reporte
     EVENT_ENTER_CALIBRATION,     // Usuario solicita modo calibración
     EVENT_CONFIRM_POINT,         // Usuario confirma un punto (LL o UR)
-    EVENT_CALIBRATION_DONE       // Usuario confirma que el recuadro es correcto
+    EVENT_CALIBRATION_DONE,       // Usuario confirma que el recuadro es correcto
+    EVENT_RESUME
 } FSMEvent;
 
 // =================================================================
-// 3. CONSTANTES DE COMPORTAMIENTO
+// 3. DEFINIENDO PATRONES DE MOVIMIENTO LÁSER
 // =================================================================
 
 // Estado protegido por mutex
-volatile SystemState currentState = IDLE;
+volatile SystemState currentState = STATE_INITIALIZING;
+
+typedef enum {
+    PATTERN_NONE,
+    PATTERN_RECTANGLE_PREVIEW,
+    PATTERN_ZIGZAG_HORIZ,
+    PATTERN_ZIGZAG_VERT
+} PatternType;
+
+typedef struct {
+    PatternType currentType;
+    bool active;
+    int stepIndex;       // En qué paso del patrón vamos
+    int direction;       // 1 o -1 (para saber si vamos o venimos en el zigzag)
+    float currentX;      // Posición actual X calculada
+    float currentY;      // Posición actual Y calculada
+    // Límites locales copiados de la calibración global
+    float minX, maxX, minY, maxY; 
+} PatternContext;
+
+PatternContext patCtx;
+
+int g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY;
 
 
-// --- LÓGICA DEL BRAZO DELTA ---
-// Parámetros físicos y de compensación
+typedef struct {
+    int cmdType; // 0 = Set X, 1 = Set Y
+    int value;   // El valor del ángulo/posición
+} ManualPosCmd;
 
-const int SERVO_HORIZONTAL = 172; 
-const int SERVO_VERTICAL = 168;
-
-// Estructura y array para el grid de ataque
-struct GridPoint { double x; double y; double z;};
-const int NUM_GRID_POINTS = 20;
-GridPoint grid[NUM_GRID_POINTS];
+float temp_X1, temp_Y1;
+float temp_X2, temp_Y2;
 
 #endif // SYSTEM_DEFINITIONS_H

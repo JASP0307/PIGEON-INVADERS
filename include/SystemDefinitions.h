@@ -25,6 +25,7 @@ typedef enum {
     EVENT_INIT_COMPLETE,         // WiFi y Telegram listos
     EVENT_START_COMMAND,         // Usuario envía "Start"
     EVENT_STOP_COMMAND,          // Usuario envía "Stop"
+    EVENT_MANUAL_COMMAND,        // Usuario envía "Comando de ataque"
     EVENT_TIMER_EXPIRED,         // Pasaron los 5 minutos de espera
     EVENT_PIGEON_DETECTED,       // Visión artificial confirma paloma
     EVENT_NO_PIGEON,             // Visión artificial confirma zona limpia

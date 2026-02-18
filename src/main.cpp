@@ -4,41 +4,44 @@
 #include <queue.h>
 #include <semphr.h>
 #include "ServoModule.h"
-#include "PinOut.h"
+#include "IO_Points.h"
 #include "Laser.h"
 
 #define btSerial Serial1
 
+#define ZIGZAG_STEP_SIZE 10.0f // Cuánto avanza en el eje secundario
+#define TARGET_TOLERANCE 2.0f  // Margen de error para decir "llegué"
+
 // Handles globales
 QueueHandle_t fsmQueue;
-QueueHandle_t deltaQueue;
+QueueHandle_t servoQueue;
 SemaphoreHandle_t stateMutex;
-SemaphoreHandle_t batteryMutex;
 
-
-ServoModule SERV_01(Pinout::BrazoDelta::SERVO_1);
-ServoModule SERV_02(Pinout::BrazoDelta::SERVO_2);
+ServoModule SERVO_X(Pinout::BrazoDelta::SERVO_X);
+ServoModule SERVO_Y(Pinout::BrazoDelta::SERVO_Y);
 
 Laser Laser_01(Pinout::Laser::Laser_1);
 
+// Tiempos de simulación en milisegundos
+TickType_t monitoringStartTime  = 0;
+// Definir un Handle para el timer de FreeRTOS
+TimerHandle_t monitoringTimer;
 
 TaskHandle_t xHandleServos;
 
 // Prototipos de tareas
 void TaskFSM(void *pvParameters);
-
 void TaskSensors(void *pvParameters);
 void TaskComms(void *pvParameters);
 void TaskServoControl(void *pvParameters);
 void TaskBluetoothCommunication(void *pvParameters);
 
 // Funciones auxiliares del brazo delta
-void delta_init();
-void delta_moveTo(double x, double y, double z);
+void servos_init();
 
 // Funciones auxiliares
-RobotState getState();
-void setState(RobotState newState);
+SystemState getState();
+void setState(SystemState newState);
 
 void setup() {
   Serial.begin(115200);
@@ -59,28 +62,18 @@ void setup() {
     while (1);
   }
 
-  // Crear mutex para proteger medición de batería
-  batteryMutex = xSemaphoreCreateMutex();
-  if (batteryMutex == NULL) {
-      Serial.println("Error: No se pudo crear el batteryMutex");
-  }
-
-
-  deltaQueue = xQueueCreate(5, sizeof(int));
+  servoQueue = xQueueCreate(5, sizeof(int));
 
   pinMode(Pinout::TiraLED::LEDs, OUTPUT);
-  
   
   Serial.println("Motores inicializados");
  
   // Crear tareas
   xTaskCreate(TaskFSM,                    "FSM",        512, NULL, 3, NULL);
   xTaskCreate(TaskSensors,                "Sensors",    256, NULL, 2, NULL);
-  xTaskCreate(TaskBattery,                "Battery",    128, NULL, 2, NULL);
   xTaskCreate(TaskComms,                  "Comms", 256, NULL, 2, NULL);
   xTaskCreate(TaskServoControl,           "ServoControl", 256, NULL, 3, &xHandleServos);
   xTaskCreate(TaskBluetoothCommunication, "Bluetooth Test Task", 1024, NULL, 2, NULL);
-  xTaskCreate(TaskDeltaControl,           "DeltaControl", 256, NULL, 2, &xHandleDelta);
   
   Serial.println("Tareas FreeRTOS creadas");
 }
@@ -88,8 +81,8 @@ void setup() {
 void loop() {}
 
 // Funciones thread-safe para estado
-RobotState getState() {
-  RobotState state;
+SystemState getState() {
+  SystemState state;
   if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
     state = currentState;
     xSemaphoreGive(stateMutex);
@@ -97,313 +90,282 @@ RobotState getState() {
   return state;
 }
 
-void setState(RobotState newState) {
+void setState(SystemState newState) {
   if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
     currentState = newState;
     xSemaphoreGive(stateMutex);
   }
 }
 
-String robotStateToString(RobotState state) {
+String SystemStateToString(SystemState state) {
   switch(state) {
     
-    case IDLE: return "IDLE";
-    case NAVIGATING: return "NAVIGATING";
-    case MOVING_TO_WEED: return "MOVING_TO_WEED";
-    case LASERING: return "LASERING";
-    case RETURNING_HOME: return "RETURNING_HOME";
-    case ERROR_STATE: return "ERROR_STATE";
-    case LOW_BATTERY: return "LOW_BATTERY";
-    case OBSTACLE: return "OBSTACLE";
+    case STATE_INITIALIZING: return "STATE_INITIALIZING";
+    case STATE_IDLE: return "STATE_IDLE";
+    case STATE_MONITORING: return "STATE_MONITORING";
+    case STATE_ATTACKING: return "STATE_ATTACKING";
+    case STATE_CALIB_SET_LL: return "STATE_CALIB_SET_LL";
+    case STATE_CALIB_SET_UR: return "STATE_CALIB_SET_UR";
+    case STATE_CALIB_PREVIEW: return "STATE_CALIB_PREVIEW";
     default: return "UNKNOWN";
   }
 }
 
-float getBatteryVoltage() {
-  float voltage;
-  if (xSemaphoreTake(batteryMutex, portMAX_DELAY)) {
-    voltage = g_batteryVoltage;
-    xSemaphoreGive(batteryMutex);
-  }
-  return voltage;
-}
 
+void servos_init() {
 
-void poblarGrid() {
-
-    grid[19] = { 15.00, -90.00, -90.00 };
-    grid[18] = { 5.00, -80.00, -100.00 };
-    grid[17] = { 5.00, -80.00, -90.00 };
-    grid[16] = { 5.00, -80.00, -75.00 };
-    grid[15] = { 5.00, -80.00, -65.00 };
-    grid[14] = { -60.00, -45.00, -80.00 };
-    grid[13] = { -50.00, -25.00, -100.00 };
-    grid[12] = { -50.00, -10.00, -120.00 };
-    grid[11] = { -60.00, -0.00, -110.00 };
-    grid[10] = { -90.00, 15.00, -65.00 };
-    grid[9] = {  00.00, -100.00, -75.00 };
-    grid[8] = { -15.00, -100.00, -75.00 };
-    grid[7] = { -5.00, -95.00, -70.00 };
-    grid[6] = { -10.00, -90.00, -55.00 };
-    grid[5] = { -75.00, -55.00, -60.00 };
-    grid[4] = { -75.00, -55.00, -60.00 };
-    grid[3] = { -55.00, -40.00, -100.00 };
-    grid[2] = { -40.00, -35.00, -110.00 };
-    grid[1] = { -75.00, -20.00, -100.00 };
-    grid[0] = { -90.00, -5.00, -110.00 };
-
-    //Serial.println("Grid de ataque poblado.");
-}
-
-void delta_init() {
-
-    SERV_01.begin();
-    SERV_02.begin();
-    
-    // Poblar el grid con tus coordenadas
-    poblarGrid();
-    
-    // Pre-calcular valores para la rotación
-    double rotation_rad = ROTATION_ANGLE_DEG * PI / 180.0;
-    cos_theta = cos(rotation_rad);
-    sin_theta = sin(rotation_rad);
-
-    // Mover a la posición HOME inicial
-    delta_moveTo_Compensated(HOME_X, HOME_Y, HOME_Z);
+    SERVO_X.begin();
+    SERVO_Y.begin();
     //Serial.println("Brazo Delta inicializado y en HOME.");
 }
 
+// Función para iniciar un patrón (llamar desde la FSM Principal)
+void startPattern(PatternType type, float min_x, float max_x, float min_y, float max_y) {
+    patCtx.currentType = type;
+    patCtx.minX = min_x; patCtx.maxX = max_x;
+    patCtx.minY = min_y; patCtx.maxY = max_y;
+    
+    // Configuración inicial
+    patCtx.stepIndex = 0;
+    patCtx.active = true;
+    
+    // Punto de partida siempre es el límite inferior izquierdo (o Home)
+    SERVO_X.setTarget(min_x);
+    SERVO_Y.setTarget(min_y);
+}
 
-void delta_moveTo(double x, double y, double z) {
-    if (DK.inverse(x, y, z) == no_error) {
-        int s1 = SERVO1_HORIZONTAL - DK.a;
-        int s2 = SERVO2_HORIZONTAL - DK.b;
-        int s3 = SERVO3_HORIZONTAL - DK.c;
-        SERV_01.setTarget(s1);
-        SERV_02.setTarget(s2);
-        SERV_03.setTarget(s3);
-    } else {
-        //Serial.println("ERROR: Posicion DELTA inalcanzable.");
+// Verifica si los servos están en posición
+bool hasReachedTarget() {
+    float dist01 = abs(SERVO_X.getPosition() - SERVO_X.getTarget());
+    float dist02 = abs(SERVO_Y.getPosition() - SERVO_Y.getTarget());
+    return (dist01 < TARGET_TOLERANCE && dist02 < TARGET_TOLERANCE);
+}
+
+void updatePatternLogic() {
+    if (!patCtx.active) return;
+
+    // Solo calculamos el siguiente paso si ya llegamos al anterior
+    if (hasReachedTarget()) {
+        
+        switch (patCtx.currentType) {
+            
+            // --- PATRÓN 1: RECUADRO (PREVIEW) ---
+            case PATTERN_RECTANGLE_PREVIEW:
+                // Recorre las 4 esquinas: (min,min) -> (max,min) -> (max,max) -> (min,max) -> (min,min)
+                switch (patCtx.stepIndex) {
+                    case 0: SERVO_X.setTarget(patCtx.maxX); SERVO_Y.setTarget(patCtx.minY); break; // Derecha, Abajo
+                    case 1: SERVO_X.setTarget(patCtx.maxX); SERVO_Y.setTarget(patCtx.maxY); break; // Derecha, Arriba
+                    case 2: SERVO_X.setTarget(patCtx.minX); SERVO_Y.setTarget(patCtx.maxY); break; // Izquierda, Arriba
+                    case 3: SERVO_X.setTarget(patCtx.minX); SERVO_Y.setTarget(patCtx.minY); break; // Izquierda, Abajo (Cierre)
+                    case 4: 
+                        patCtx.active = false; // Fin del patrón
+                        // AVISAR A LA FSM PRINCIPAL QUE TERMINAMOS
+                        FSMEvent e = EVENT_CALIBRATION_DONE;
+                        xQueueSend(fsmQueue, &e, 0);
+                        return; 
+                }
+                patCtx.stepIndex++;
+                break;
+
+            // --- PATRÓN 2: ZIGZAG HORIZONTAL ---
+            case PATTERN_ZIGZAG_HORIZ:
+                // Algoritmo: Mover X a un extremo, bajar Y un poco, Mover X al otro extremo...
+                // stepIndex aquí representará las líneas verticales avanzadas
+                float nextY = patCtx.minY + (patCtx.stepIndex * ZIGZAG_STEP_SIZE);
+                
+                if (nextY > patCtx.maxY) {
+                     // Terminamos el barrido, volver a home
+                    SERVO_X.setTarget(patCtx.minX);
+                    SERVO_Y.setTarget(patCtx.minY);
+                    patCtx.active = false;
+                    
+                    FSMEvent e = EVENT_ATTACK_COMPLETE;
+                    xQueueSend(fsmQueue, &e, 0);
+                } else {
+                    // Si step es par, vamos a la derecha (MaxX), si es impar a la izquierda (MinX)
+                    float targetX = (patCtx.stepIndex % 2 == 0) ? patCtx.maxX : patCtx.minX;
+                    
+                    SERVO_X.setTarget(targetX);
+                    SERVO_Y.setTarget(nextY);
+                    
+                    patCtx.stepIndex++;
+                }
+                break;
+
+            // --- PATRÓN 3: ZIGZAG VERTICAL ---
+            case PATTERN_ZIGZAG_VERT:
+                 // Similar al horizontal pero invirtiendo ejes
+                float nextX = patCtx.minX + (patCtx.stepIndex * ZIGZAG_STEP_SIZE);
+                
+                if (nextX > patCtx.maxX) {
+                    SERVO_X.setTarget(patCtx.minX);
+                    SERVO_Y.setTarget(patCtx.minY);
+                    patCtx.active = false;
+                    FSMEvent e = EVENT_ATTACK_COMPLETE;
+                    xQueueSend(fsmQueue, &e, 0);
+                } else {
+                    float targetY = (patCtx.stepIndex % 2 == 0) ? patCtx.maxY : patCtx.minY;
+                    SERVO_X.setTarget(nextX);
+                    SERVO_Y.setTarget(targetY);
+                    patCtx.stepIndex++;
+                }
+                break;
+        }
     }
 }
 
+// Callback del Timer (se ejecuta cuando expiran los 5 mins)
+void monitoringTimerCallback(TimerHandle_t xTimer) {
+    FSMEvent e = EVENT_TIMER_EXPIRED;
+    // Enviar a la cola desde el contexto del timer (o ISR si fuera hardware)
+    xQueueSend(fsmQueue, &e, 0); 
+}
+
+
+void onEnterInit() {
+  servos_init();
+}
 
 void onEnterIdle() {
   //Serial.println("Entrando en IDLE");
-
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  digitalWrite(Pinout::TiraLED::LEDs, HIGH);
-}
-
-void onEnterNavigating() {
-  Serial.println("START_DETECTION");
-  vTaskDelay(pdMS_TO_TICKS(1500)); 
-  Serial.println("NAVIGATING");
-
-  digitalWrite(Pinout::TiraLED::LEDs, HIGH);
-}
-
-void onEnterLowBattery() {
-  //Serial.println("Entrando en LOW_BATTERY");
+  //vTaskDelay(pdMS_TO_TICKS(1000));
   digitalWrite(Pinout::TiraLED::LEDs, LOW);
+  xTimerStop(monitoringTimer, 0);
 }
 
-void onEnterObstacle() {
-  //Serial.println("Entrando en OBSTACLE");
-  digitalWrite(Pinout::TiraLED::LEDs, LOW);
+void onEnterMonitoring(){
+  xTimerStart(monitoringTimer, 0);
 }
-
-void onEnterLasering() {
-  //Serial.println("Entrando en LASERING (2s)");
+  
+void onEnterAttacking(){
+  xTimerStop(monitoringTimer, 0);
+  
+  // Lógica para elegir patrón aleatorio o rotativo
+  startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
   Laser_01.on();
+  startPattern(p, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
+}
+void onEnterCalibSetLL(){
+  
+}
+void onEnterCalibSetUR(){
+  
 }
 
-void onEnterReturningHome() {
-  //Serial.println("Entrando en RETURNING_HOME");
-  Laser_01.off();
+void onEnterCalibPrev(){
+  startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
 }
-
-void onEnterMovingToWeed() {
-  //Serial.println("Entrando en MOVING_TO_WEED");
 
 // FSM principal
 void TaskFSM(void *pvParameters) {
   (void) pvParameters;
 
   FSMEvent receivedEvent;
-  RobotState currentState, newState;
+  SystemState currentState = STATE_INITIALIZING; // Estado inicial explícito
+  SystemState newState = STATE_INITIALIZING; // Estado inicial explícito
 
+  // Crear el timer (5 minutos, one-shot o auto-reload según prefieras logicamente)
+  // Aquí uso auto-reload false para controlarlo manualmente en los estados
+  monitoringTimer = xTimerCreate("MonTimer", pdMS_TO_TICKS(300000), pdFALSE, 0, monitoringTimerCallback);
+  
   // Establecer estado inicial y ejecutar su acción de entrada
-  setState(IDLE);
-  onEnterIdle();
+  setState(currentState);
+  onEnterInit();
 
   for (;;) {
-    if (xQueueReceive(fsmQueue, &receivedEvent, pdMS_TO_TICKS(100))) {
-      RobotState state = getState();
+    if (xQueueReceive(fsmQueue, &receivedEvent, portMAX_DELAY))) {
+      SystemState state = getState();
       
-      currentState = getState();
       newState = currentState; // Por defecto, no hay cambio de estado
+      
+      // LÓGICA DE TRANSICIÓN: solo decide el siguiente estado
+      switch (currentState) {
+        case STATE_INITIALIZING:
+            if (receivedEvent == EVENT_INIT_COMPLETE) newState = STATE_IDLE;
+            break;
+        
+        case STATE_IDLE:
+            if (receivedEvent == EVENT_START_COMMAND) newState = STATE_MONITORING;
+            else if (receivedEvent == EVENT_ENTER_CALIBRATION) newState = STATE_CALIB_SET_LL;
+            break;
 
-      // Estos eventos pueden ocurrir en cualquier estado y tienen precedencia.
-      if (receivedEvent == EVENT_LOW_BATTERY) {
-          newState = LOW_BATTERY;
-      } else if (receivedEvent == EVENT_ERROR) {
-          newState = ERROR_STATE;
-      } else {
-          // LÓGICA DE TRANSICIÓN: solo decide el siguiente estado
-          switch (currentState) {
-            case IDLE:
-                if (receivedEvent == EVENT_NAVIGATE) newState = NAVIGATING;
-                break;
-
-            case NAVIGATING:
-                if (receivedEvent == EVENT_STOP) newState = IDLE;
-                else if (receivedEvent == EVENT_OBSTACLE) newState = OBSTACLE;
-                else if (receivedEvent == EVENT_WEED_FOUND) newState = MOVING_TO_WEED;
-                else if (receivedEvent == EVENT_IR_SIGNAL_DETECTED) newState = ROW_CHANGE;
-                else if (receivedEvent == EVENT_RAKE_WEED_FOUND) {
-                  // Solo iniciamos la acción si no está ya en progreso.
-                  if (!g_isRaking) {
-                      //Serial.println("RASTRILLO: Iniciando secuencia concurrente.");
-                      g_isRaking = true;
-                      rakeStartTime = xTaskGetTickCount();
-                      // Acción inmediata: Bajar el rastrillo
-                      // SERV_04.setTarget(POS_TRABAJO_RASTRILLO); 
-                  }
-                }
-                break;
-                
-            case MOVING_TO_WEED:
-                if (receivedEvent == EVENT_ARM_AT_TARGET) newState = LASERING;
-                break;
+        case STATE_MONITORING:
+            if (receivedEvent == EVENT_STOP_COMMAND) newState = STATE_IDLE;
+            else if (receivedEvent == EVENT_PIGEON_DETECTED || receivedEvent == EVENT_MANUAL_COMMAND) newState = STATE_ATTACKING;
+            else if (receivedEvent == EVENT_TIMER_EXPIRED || receivedEvent == EVENT_NO_PIGEON){
+              newState = STATE_MONITORING;
+              onEnterMonitoring();
+            }
+            break;
             
-            case LASERING:
-                if (receivedEvent == EVENT_LASER_COMPLETE) newState = RETURNING_HOME;
-                break;
+        case STATE_ATTACKING:
+            if (receivedEvent == EVENT_ATTACK_COMPLETE) newState = STATE_MONITORING;
+            break;
+        
+        case STATE_CALIB_SET_LL:
+            if (receivedEvent == EVENT_CONFIRM_POINT) newState = STATE_CALIB_SET_UR;
+            else if (receivedEvent == EVENT_STOP_COMMAND) newState = STATE_IDLE;
+            break;
 
-            case RETURNING_HOME:
-                if (receivedEvent == EVENT_ATTACK_COMPLETE) newState = NAVIGATING;
-                break;
-            
-            case OBSTACLE:
-                // El evento de fin de espera ahora viene de la cola
-                if (receivedEvent == EVENT_TIMEOUT_OBSTACLE) newState = NAVIGATING;
-                else if (receivedEvent == EVENT_RESUME) newState = NAVIGATING;
-                break;
-
-            case LOW_BATTERY:
-            case ERROR_STATE:
-                if (receivedEvent == EVENT_RESUME) newState = IDLE;
-                break;
-            case ROW_CHANGE:
-                if (receivedEvent == EVENT_ROW_CHANGED) newState = NAVIGATING;
-                break;
-          }
-        }
+        case STATE_CALIB_SET_UR:
+            if (receivedEvent == EVENT_CONFIRM_POINT) newState = STATE_CALIB_PREVIEW;
+            break;
+        
+        case STATE_CALIB_PREVIEW:
+            // El evento de fin de espera ahora viene de la cola
+            if (receivedEvent == EVENT_CALIBRATION_DONE) newState = STATE_IDLE;
+            break;
+        case ERROR_STATE:
+            if (receivedEvent == EVENT_RESUME) newState = STATE_IDLE;
+            break;
+      }
+    }
 
       // APLICAR CAMBIO DE ESTADO Y EJECUTAR ACCIÓN DE ENTRADA
       if (newState != currentState) {
           setState(newState);
 
           switch (newState) {
-              case IDLE: onEnterIdle(); break;
-              case NAVIGATING: onEnterNavigating(); break;
-              case LOW_BATTERY: onEnterLowBattery(); break;
-              case OBSTACLE: onEnterObstacle(); break;
-              case LASERING: onEnterLasering(); break;
-              case RETURNING_HOME: onEnterReturningHome(); break;
-              case MOVING_TO_WEED: onEnterMovingToWeed(); break;
-              case ROW_CHANGE: onEnterRowChange(); break;
+              case STATE_INITIALIZING: onEnterInit(); break;
+              case STATE_IDLE: onEnterIdle(); break;
+              case STATE_MONITORING: onEnterMonitoring(); break;
+              case STATE_ATTACKING: onEnterAttacking(); break;
+              case STATE_CALIB_SET_LL: onEnterCalibSetLL(); break;
+              case STATE_CALIB_SET_UR: onEnterCalibSetUR(); break;
+              case STATE_CALIB_PREVIEW: onEnterCalibPrev(); break;
           }
       }
     }
 
     // GESTIÓN DE TIMEOUTS
     currentState = getState();
-    if (currentState == LASERING) {
-        if ((xTaskGetTickCount() - laserStartTime) >= pdMS_TO_TICKS(2000)) {
-            FSMEvent e = EVENT_LASER_COMPLETE;
+    if (currentState == STATE_MONITORING) {
+        if ((xTaskGetTickCount() - monitoringStartTime) >= pdMS_TO_TICKS(300000)) {
+            FSMEvent e = EVENT_TIMER_EXPIRED;
             xQueueSend(fsmQueue, &e, 0);
         }
-    }
-    if (currentState == OBSTACLE) {
-        if ((xTaskGetTickCount() - obstacleEntryTime) >= pdMS_TO_TICKS(5000)) {
-            FSMEvent e = EVENT_TIMEOUT_OBSTACLE;
-            xQueueSend(fsmQueue, &e, 0);
-        }
-    }
-
-    if (g_isRaking && (xTaskGetTickCount() - g_rakeStartTime >= pdMS_TO_TICKS(5000))) {
-            //Serial.println("RASTRILLO: 5 segundos completados. Subiendo rastrillo.");
-            //SERV_04.setTarget(POS_INICIAL_RASTRILLO); // Subir el rastrillo
-            g_isRaking = false; // Finalizar la secuencia
-    }
-  
+    }  
   }
 }
 
 void TaskServoControl(void *pvParameters) {
   (void) pvParameters;
-  delta_init();
-  SERV_04.begin();
+  
+  // Aseguramos que no haya patrón activo al inicio
+  patCtx.active = false;
+  
   vTaskDelay(pdMS_TO_TICKS(1000));
-
+  
   for (;;) {
-    SERV_01.update();
-    SERV_02.update();
-    vTaskDelay(pdMS_TO_TICKS(25)); 
+    // 1. Calcular nuevos objetivos si estamos en modo automático (patrón)
+    updatePatternLogic();
+    
+    // 2. Mover los servos físicamente hacia el objetivo actual
+    SERVO_X.update();
+    SERVO_Y.update();
+    vTaskDelay(pdMS_TO_TICKS(75)); 
   }
 }
-
-void TaskDeltaControl(void *pvParameters){
-  (void) pvParameters;
-
-  int grid_index;
-  FSMEvent eventToSend;
-
-  for(;;){
-    // Esperar a que llegue un comando (índice del grid) a la cola
-    if(xQueueReceive(deltaQueue, &grid_index, portMAX_DELAY)){
-
-      //   Validar el índice recibido
-      if(grid_index >= 0 && grid_index < NUM_GRID_POINTS){
-        
-        // Notificar a la FSM que el brazo se está moviendo
-        eventToSend = EVENT_WEED_FOUND;
-        xQueueSend(fsmQueue, &eventToSend, 0);
-        
-        // Obtener las coordenadas del grid y moverse
-        GridPoint target = grid[grid_index];
-        delta_moveTo_Compensated(target.x, target.y, target.z);
-        vTaskDelay(pdMS_TO_TICKS(1500)); // Simular tiempo de movimiento
-
-        // Notificar a la FSM que el brazo llegó al objetivo
-        eventToSend = EVENT_ARM_AT_TARGET;
-        xQueueSend(fsmQueue, &eventToSend, 0);
-
-        // --- Aquí se quedaría esperando hasta que termine la acción (ej. láser) ---
-        // La FSM se encarga de la temporización del láser.
-        // Después de que la FSM complete el estado LASERING, enviará un comando de regreso a casa.
-
-        // Simulación de espera durante el lasering
-        vTaskDelay(pdMS_TO_TICKS(3000)); 
-
-        // Volver a la posición HOME
-        delta_moveTo_Compensated(HOME_X, HOME_Y, HOME_Z);
-        vTaskDelay(pdMS_TO_TICKS(1500)); // Simular tiempo de regreso
-
-        // Notificar a la FSM que la secuencia completa ha terminado
-        eventToSend = EVENT_ATTACK_COMPLETE;
-        xQueueSend(fsmQueue, &eventToSend, 0);
-        Serial.println("DONE");
-        
-      } else {
-        //Serial.println("ERROR: Índice de grid inválido recibido.");
-      }
-    }
-  }
-}
-
 
 void TaskComms(void *pvParameters) {
   (void) pvParameters;
@@ -439,13 +401,7 @@ void TaskComms(void *pvParameters) {
       else if (msg.startsWith("ATTACK,")) {
         String indexStr = msg.substring(7); // "ATTACK," tiene 7 caracteres
         int grid_index = indexStr.toInt();
-        
-        // Enviar el índice a la cola del brazo delta
-        if (xQueueSend(deltaQueue, &grid_index, pdMS_TO_TICKS(100)) == pdPASS) {
-            //Serial.println("ACK,ATTACK_CMD_RECEIVED");
-        } else {
-            //Serial.println("ERROR,DELTA_QUEUE_FULL");
-        }
+
       }
       else {
         //Serial.println("ERROR,UNKNOWN_CMD");
@@ -454,7 +410,7 @@ void TaskComms(void *pvParameters) {
     
     // Enviar heartbeat periódico usando FreeRTOS ticks
     if ((xTaskGetTickCount() - lastHeartbeat) > pdMS_TO_TICKS(5000)) {
-      RobotState state = getState();
+      SystemState state = getState();
       //Serial.print("HEARTBEAT,");
       //Serial.print(state);
       //Serial.println();
@@ -487,10 +443,17 @@ void TaskBluetoothCommunication(void *pvParameters) {
           //Serial.println("DEBUG: Comando STOP recibido");
           FSMEvent e = EVENT_STOP;
           xQueueSend(fsmQueue, &e, 0);
-        } else if (incomingString.startsWith("YAW:")) {
+        } else if (incomingString.startsWith("X_POS:")) {
           // Extraer el valor después de "YAW:"
-          String yawValueStr = incomingString.substring(4); // 4 es la longitud de "YAW:"
-          float newYaw = yawValueStr.toFloat();
+          String x_btcmdStr = incomingString.substring(6); // 6 es la longitud de "X_POS:"
+          int new_x_btcmd = x_btcmdStr.toInt();
+          setTargetYaw(newYaw); // Llamar a nuestra función segura
+          //Serial.print("DEBUG: Nuevo Yaw Objetivo establecido a -> ");
+          //Serial.println(newYaw);
+        } else if (incomingString.startsWith("Y_POS:")) {
+          // Extraer el valor después de "YAW:"
+          String y_btcmdStr = incomingString.substring(6); // 6 es la longitud de "Y_POS:"
+          int new_y_btcmd = y_btcmdStr.toInt();
           setTargetYaw(newYaw); // Llamar a nuestra función segura
           //Serial.print("DEBUG: Nuevo Yaw Objetivo establecido a -> ");
           //Serial.println(newYaw);
@@ -504,10 +467,10 @@ void TaskBluetoothCommunication(void *pvParameters) {
     // --- Parte 2: Construir y enviar el paquete de telemetría periódicamente ---
     if (millis() - lastTelemetrySendTime > TELEMETRY_INTERVAL_MS) {
       
-      RobotState currentState = getState();
+      SystemState currentState = getState();
       float currentVoltage = getBatteryVoltage();
 
-      String stateStr = robotStateToString(currentState);
+      String stateStr = SystemStateToString(currentState);
       
       char voltageBuffer[10]; // Buffer para convertir el float del voltaje
       dtostrf(currentVoltage, 4, 2, voltageBuffer); // Formato: 4 caracteres en total, 2 decimales

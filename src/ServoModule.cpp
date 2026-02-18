@@ -23,7 +23,6 @@ void ServoModule::begin(int initialAngle) {
         _currentAngle = initialAngle;
         _targetAngle = initialAngle;
     }
-} _servo.attach(_pin); <-- CAMBIO: Eliminamos esto. El servo no se activa al inicio.
 }
 
 // setTarget(): Ahora es el responsable de "despertar" al servo.

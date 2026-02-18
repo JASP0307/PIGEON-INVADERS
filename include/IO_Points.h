@@ -9,8 +9,8 @@ namespace Pinout {
     // SUBSISTEMA DE ACTUACIÓN (SERVO MOTORES)
     //----------------------------------------------------------------
     namespace ServoMotors {
-        constexpr uint8_t SERVO_HORIZONTAL = 6;
-        constexpr uint8_t SERVO_VERTICAL = 7;
+        constexpr uint8_t SERVO_X = 6;
+        constexpr uint8_t SERVO_Y = 7;
     }
 
     //================================================================

@@ -3,6 +3,11 @@
 #include <Arduino.h>
 #include <queue.h>
 #include <semphr.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <UniversalTelegramBot.h>
+#include <ArduinoJson.h>
+
 #include "ServoModule.h"
 #include "IO_Points.h"
 #include "Laser.h"
@@ -12,6 +17,24 @@
 
 #define ZIGZAG_STEP_SIZE 10.0f // Cuánto avanza en el eje secundario
 #define TARGET_TOLERANCE 2.0f  // Margen de error para decir "llegué"
+
+// Credenciales Wi-Fi
+#define WIFI_SSID "NOMBRE_DE_TU_WIFI"
+#define WIFI_PASSWORD "TU_CONTRASEÑA"
+
+// Credenciales Telegram
+// Obtén esto creando un bot con @BotFather en Telegram
+#define BOT_TOKEN "TU_BOT_TOKEN_AQUI" 
+// Tu ID numérico (puedes obtenerlo con el bot @myidbot) para seguridad
+#define CHAT_ID_PERMITIDO "123456789"
+
+WiFiClientSecure secured_client;
+UniversalTelegramBot bot(BOT_TOKEN, secured_client);
+
+// Intervalo de chequeo (en ms) para no saturar la red ni la API
+const unsigned long BOT_MTBS = 1000; 
+unsigned long bot_lasttime = 0;
+
 
 // Handles globales
 QueueHandle_t fsmQueue;
@@ -34,7 +57,7 @@ TaskHandle_t xHandleServos;
 
 // Prototipos de tareas
 void TaskFSM(void *pvParameters);
-void TaskSensors(void *pvParameters);
+void TaskTelegram(void *pvParameters);
 void TaskComms(void *pvParameters);
 void TaskServoControl(void *pvParameters);
 void TaskBluetoothCommunication(void *pvParameters);
@@ -75,11 +98,11 @@ void setup() {
   pinMode(Pinout::TiraLED::LEDs, OUTPUT);
  
   // Crear tareas
-  xTaskCreate(TaskFSM,                    "FSM",        512, NULL, 3, NULL);
-  xTaskCreate(TaskSensors,                "Sensors",    256, NULL, 2, NULL);
-  xTaskCreate(TaskComms,                  "Comms",      256, NULL, 2, NULL);
-  xTaskCreate(TaskServoControl,           "ServoControl", 256, NULL, 3, &xHandleServos);
-  xTaskCreate(TaskBluetoothCommunication, "Bluetooth Test Task", 1024, NULL, 2, NULL);
+  xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     6144, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskBluetoothCommunication, "Bluetooth",    4096, NULL, 2, NULL, 0);
+  xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          4096, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
   
   Serial.println("Tareas FreeRTOS creadas");
 }
@@ -225,6 +248,44 @@ void monitoringTimerCallback(TimerHandle_t xTimer) {
     xQueueSend(fsmQueue, &e, 0); 
 }
 
+void handleNewMessages(int numNewMessages) {
+  for (int i = 0; i < numNewMessages; i++) {
+    String chat_id = String(bot.messages[i].chat_id);
+    String text = bot.messages[i].text;
+
+    // Seguridad: Ignorar mensajes de extraños
+    if (chat_id != CHAT_ID_PERMITIDO) {
+        bot.sendMessage(chat_id, "Acceso denegado.", "");
+        continue;
+    }
+
+    String from_name = bot.messages[i].from_name;
+
+    if (text == "/start") {
+      FSMEvent e = EVENT_START_COMMAND;
+      xQueueSend(fsmQueue, &e, 0);
+      bot.sendMessage(chat_id, "Iniciando Pigeon Invaders...", "");
+    }
+    else if (text == "/stop") {
+      FSMEvent e = EVENT_STOP_COMMAND;
+      xQueueSend(fsmQueue, &e, 0);
+      bot.sendMessage(chat_id, "Sistema DETENIDO.", "");
+    }
+    else if (text == "/status") {
+      // Pedimos el estado actual de forma thread-safe
+      SystemState currentState = getState(); 
+      String stateStr = SystemStateToString(currentState);
+      bot.sendMessage(chat_id, "Estado actual: " + stateStr, "");
+    }
+    else if (text == "/help") {
+      String welcome = "Comandos Pigeon Invaders:\n";
+      welcome += "/start : Iniciar monitoreo\n";
+      welcome += "/stop : Detener sistema\n";
+      welcome += "/status : Ver estado actual\n";
+      bot.sendMessage(chat_id, welcome, "");
+    }
+  }
+}
 
 void onEnterInit() {
   Serial.println("Entrando en STATE_INITIALIZING");
@@ -569,6 +630,50 @@ void TaskBluetoothCommunication(void *pvParameters) {
         Serial.println("Telemetria enviada por evento: " + packet);
     }
 
+    vTaskDelay(pdMS_TO_TICKS(100)); 
+  }
+}
+
+void TaskTelegram(void *pvParameters) {
+  (void) pvParameters;
+
+  // 1. Conexión WiFi inicial
+  Serial.print("Conectando a WiFi ");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Esperar conexión (bloqueante solo al inicio)
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+  Serial.println("\nWiFi Conectado.");
+
+  // Importante para ESP32: Permitir conexión SSL sin certificado root (más simple para desarrollo)
+  secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
+  // O si tienes problemas de certificados, usa: secured_client.setInsecure();
+
+  for (;;) {
+    // Verificar conexión WiFi y reconectar si es necesario
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi perdido, reconectando...");
+        WiFi.disconnect();
+        WiFi.reconnect();
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        continue;
+    }
+
+    // Polling a Telegram
+    if (millis() - bot_lasttime > BOT_MTBS) {
+      int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+
+      while (numNewMessages) {
+        handleNewMessages(numNewMessages);
+        numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+      }
+      bot_lasttime = millis();
+    }
+    
+    // IMPORTANTE: ceder tiempo al Watchdog
     vTaskDelay(pdMS_TO_TICKS(100)); 
   }
 }

@@ -6,23 +6,11 @@ ServoModule::ServoModule(uint8_t pin)
     // El servo empieza "dormido" (detached).
 }
 
-// begin(): No activa el servo. Solo prepara las variables.
+// begin(): Ya no activa el servo. Solo prepara las variables.
 void ServoModule::begin(int initialAngle) {
-    if (!_isAttached) {
-        // Opcional: Configurar la frecuencia a 50Hz (estándar para servos)
-        _servo.setPeriodHertz(50); 
-
-        // attach(pin, min_pulse_us, max_pulse_us)
-        // Valores comunes: 500, 2400. Ajusta según tu modelo de servo.
-        _servo.attach(_pin, 500, 2400); 
-        
-        _isAttached = true;
-        
-        // Mover a posición inicial
-        _servo.write(initialAngle);
-        _currentAngle = initialAngle;
-        _targetAngle = initialAngle;
-    }
+    _currentAngle = constrain(initialAngle, 0, 180);
+    _targetAngle = _currentAngle;
+    // _servo.attach(_pin); <-- CAMBIO: Eliminamos esto. El servo no se activa al inicio.
 }
 
 // setTarget(): Ahora es el responsable de "despertar" al servo.
@@ -61,7 +49,10 @@ bool ServoModule::update() {
     }
 }
 
-// getCurrentAngle(): Sin cambios.
-int ServoModule::getCurrentAngle() {
+int ServoModule::getPosition() {
     return _currentAngle;
+}
+
+int ServoModule::getTarget() {
+    return _targetAngle;
 }

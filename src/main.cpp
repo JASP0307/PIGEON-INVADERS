@@ -144,6 +144,25 @@ void servos_init() {
     SERVO_X.begin();
     SERVO_Y.begin();
     Serial.println("Servos inicializados.");
+
+    // 1. Conexión WiFi inicial
+  Serial.print("Conectando a WiFi ");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Esperar conexión (bloqueante solo al inicio)
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    vTaskDelay(pdMS_TO_TICKS(500));
+  }
+  Serial.println("\nWiFi Conectado.");
+
+  // Importante para ESP32: Permitir conexión SSL sin certificado root (más simple para desarrollo)
+  secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
+  // O si tienes problemas de certificados, usa: secured_client.setInsecure();
+  
+  FSMEvent e = EVENT_INIT_COMPLETE;
+  xQueueSend(fsmQueue, &e, 0);
+
 }
 
 // Función para iniciar un patrón (llamar desde la FSM Principal)
@@ -290,6 +309,7 @@ void handleNewMessages(int numNewMessages) {
 void onEnterInit() {
   Serial.println("Entrando en STATE_INITIALIZING");
   servos_init();
+
 }
 
 void onEnterIdle() {
@@ -636,21 +656,6 @@ void TaskBluetoothCommunication(void *pvParameters) {
 
 void TaskTelegram(void *pvParameters) {
   (void) pvParameters;
-
-  // 1. Conexión WiFi inicial
-  Serial.print("Conectando a WiFi ");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  // Esperar conexión (bloqueante solo al inicio)
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    vTaskDelay(pdMS_TO_TICKS(500));
-  }
-  Serial.println("\nWiFi Conectado.");
-
-  // Importante para ESP32: Permitir conexión SSL sin certificado root (más simple para desarrollo)
-  secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
-  // O si tienes problemas de certificados, usa: secured_client.setInsecure();
 
   for (;;) {
     // Verificar conexión WiFi y reconectar si es necesario

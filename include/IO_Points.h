@@ -6,22 +6,22 @@ namespace Pinout {
 
 
     //================================================================
-    // SUBSISTEMA DE ACTUACIÓN (BRAZO DELTA)
+    // SUBSISTEMA DE ACTUACIÓN (SERVO MOTORES)
     //----------------------------------------------------------------
-    namespace BrazoDelta {
-        constexpr uint8_t SERVO_1 = 6;
-        constexpr uint8_t SERVO_2 = 7;
+    namespace ServoMotors {
+        constexpr uint8_t SERVO_HORIZONTAL = 6;
+        constexpr uint8_t SERVO_VERTICAL = 7;
     }
 
     //================================================================
-    // SUBSISTEMA DE ACTUACIÓN (LASER])
+    // SUBSISTEMA DE ACTUACIÓN (LASER)
     //----------------------------------------------------------------
     namespace Laser {
         constexpr uint8_t Laser_1 = A12;
     }
 
     //================================================================
-    // SUBSISTEMA DE ACTUACICIÓN (LEDS])
+    // SUBSISTEMA DE ACTUACICIÓN (LEDS)
     //----------------------------------------------------------------
     namespace TiraLED {
         constexpr uint8_t LEDs = A1;

@@ -15,8 +15,8 @@
 
 // Handles globales
 QueueHandle_t fsmQueue;
-QueueHandle_t servoQueue;
 QueueHandle_t manualControlQueue;
+QueueHandle_t telemetryQueue;
 
 SemaphoreHandle_t stateMutex;
 
@@ -65,16 +65,19 @@ void setup() {
     while (1);
   }
 
-  servoQueue = xQueueCreate(5, sizeof(int));
+  // Crear cola FSM
+  telemetryQueue = xQueueCreate(5, sizeof(SystemState));
+  if (telemetryQueue == NULL) {
+    Serial.println("Error: No se pudo crear la cola telemetryQueue.");
+    while (1);
+  }
 
   pinMode(Pinout::TiraLED::LEDs, OUTPUT);
-  
-  Serial.println("Motores inicializados");
  
   // Crear tareas
   xTaskCreate(TaskFSM,                    "FSM",        512, NULL, 3, NULL);
   xTaskCreate(TaskSensors,                "Sensors",    256, NULL, 2, NULL);
-  xTaskCreate(TaskComms,                  "Comms", 256, NULL, 2, NULL);
+  xTaskCreate(TaskComms,                  "Comms",      256, NULL, 2, NULL);
   xTaskCreate(TaskServoControl,           "ServoControl", 256, NULL, 3, &xHandleServos);
   xTaskCreate(TaskBluetoothCommunication, "Bluetooth Test Task", 1024, NULL, 2, NULL);
   
@@ -114,12 +117,10 @@ String SystemStateToString(SystemState state) {
   }
 }
 
-
 void servos_init() {
-
     SERVO_X.begin();
     SERVO_Y.begin();
-    //Serial.println("Brazo Delta inicializado y en HOME.");
+    Serial.println("Servos inicializados.");
 }
 
 // Función para iniciar un patrón (llamar desde la FSM Principal)
@@ -250,9 +251,11 @@ void onEnterAttacking(){
   Laser_01.on();
   startPattern(p, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
 }
+
 void onEnterCalibSetLL(){
   Laser_01.on();
 }
+
 void onEnterCalibSetUR(){
   temp_X1 = SERVO_X.getPosition();
   temp_Y1 = SERVO_Y.getPosition();
@@ -343,6 +346,7 @@ void TaskFSM(void *pvParameters) {
       // APLICAR CAMBIO DE ESTADO Y EJECUTAR ACCIÓN DE ENTRADA
       if (newState != currentState) {
           setState(newState);
+          xQueueSend(telemetryQueue, &currentState, 0);
 
           switch (newState) {
               case STATE_INITIALIZING: onEnterInit(); break;
@@ -454,7 +458,21 @@ void TaskComms(void *pvParameters) {
 
           Serial.println(cmd.value);
       }
-      
+      else if (msg.equals("CONFIRM_LL")) {
+          // Extraer el valor después de "Y:"
+          Serial.println("DEBUG: Comando CONFIRM_LL recibido");
+
+          FSMEvent e = EVENT_CONFIRM_POINT;
+          xQueueSend(fsmQueue, &e, 0);;
+      }
+      else if (msg.equals("CONFIRM_UR")) {
+          // Extraer el valor después de "Y:"
+          Serial.println("DEBUG: Comando CONFIRM_UR recibido");
+
+          FSMEvent e = EVENT_CONFIRM_POINT;
+          xQueueSend(fsmQueue, &e, 0);;
+      }
+
       else {
         //Serial.println("ERROR,UNKNOWN_CMD");
       }
@@ -476,14 +494,15 @@ void TaskComms(void *pvParameters) {
 void TaskBluetoothCommunication(void *pvParameters) {
   (void) pvParameters;
   String incomingString = "";
-  
+  SystemState stateToReport;
+
   // Temporizador para enviar toda la telemetría a un intervalo fijo
   uint32_t lastTelemetrySendTime = 0;
   const uint32_t TELEMETRY_INTERVAL_MS = 1000; // Enviar todo cada 1 segundo
 
   for (;;) {
-    // --- Parte 1: Escuchar comandos (sin cambios) ---
-    if (btSerial.available() > 0) {
+    // --- Parte 1: Escuchar comandos ---
+    while (btSerial.available() > 0) {
       char c = btSerial.read();
       if (c == '\n') {
         incomingString.trim(); 
@@ -520,18 +539,15 @@ void TaskBluetoothCommunication(void *pvParameters) {
           xQueueSend(manualControlQueue, &cmd, 0);
 
           Serial.println(cmd.value);
+
         } else if (incomingString == "CONFIRM_LL") {
           Serial.println("DEBUG: Comando CONFIRM_LL recibido");
-          g_calibMinX = SERVO_X.getPosition();
-          g_calibMinY = SERVO_Y.getPosition();
 
           FSMEvent e = EVENT_CONFIRM_POINT;
           xQueueSend(fsmQueue, &e, 0);
 
         } else if (incomingString == "CONFIRM_UR") {
           Serial.println("DEBUG: Comando CONFIRM_UR recibido");
-          g_calibMaxX = SERVO_X.getPosition();
-          g_calibMaxY = SERVO_Y.getPosition();
 
           FSMEvent e = EVENT_CONFIRM_POINT;
           xQueueSend(fsmQueue, &e, 0);
@@ -544,18 +560,13 @@ void TaskBluetoothCommunication(void *pvParameters) {
     }
 
     // --- Parte 2: Construir y enviar el paquete de telemetría periódicamente ---
-    if (millis() - lastTelemetrySendTime > TELEMETRY_INTERVAL_MS) {
-      
-      SystemState currentState = getState();
-
-      String stateStr = SystemStateToString(currentState);
-      
-      String telemetryPacket = "STATE:" + stateStr;
-
-      btSerial.println(telemetryPacket);
-      //Serial.println("DEBUG: Enviando Telemetría -> " + telemetryPacket);
-
-      lastTelemetrySendTime = millis();
+    if (xQueueReceive(telemetryQueue, &stateToReport, 0) == pdTRUE) {
+        
+        String stateStr = SystemStateToString(stateToReport);
+        String packet = "STATE:" + stateStr;
+        btSerial.println(packet);
+        
+        Serial.println("Telemetria enviada por evento: " + packet);
     }
 
     vTaskDelay(pdMS_TO_TICKS(100)); 

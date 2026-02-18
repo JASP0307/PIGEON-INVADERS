@@ -144,25 +144,6 @@ void servos_init() {
     SERVO_X.begin();
     SERVO_Y.begin();
     Serial.println("Servos inicializados.");
-
-    // 1. Conexión WiFi inicial
-  Serial.print("Conectando a WiFi ");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  
-  // Esperar conexión (bloqueante solo al inicio)
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    vTaskDelay(pdMS_TO_TICKS(500));
-  }
-  Serial.println("\nWiFi Conectado.");
-
-  // Importante para ESP32: Permitir conexión SSL sin certificado root (más simple para desarrollo)
-  secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
-  // O si tienes problemas de certificados, usa: secured_client.setInsecure();
-  
-  FSMEvent e = EVENT_INIT_COMPLETE;
-  xQueueSend(fsmQueue, &e, 0);
-
 }
 
 // Función para iniciar un patrón (llamar desde la FSM Principal)
@@ -310,6 +291,37 @@ void onEnterInit() {
   Serial.println("Entrando en STATE_INITIALIZING");
   servos_init();
 
+  // 1. Conexión WiFi inicial
+  Serial.print("Conectando a WiFi ");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Esperar conexión (bloqueante)
+  // IMPORTANTE: Si se va la luz y vuelve pero no hay internet, 
+  // el robot se quedará aquí "congelado" y no atacará palomas.
+  // ¿Es esto lo que quieres? Si sí, está perfecto.
+  int retryCount = 0;
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    // Opcional: Si tarda mucho, podrías reiniciar el ESP
+    retryCount++;
+    if(retryCount > 60) { // 30 segundos
+        Serial.println("\nError WiFi: Reiniciando...");
+        ESP.restart();
+    }
+  }
+  Serial.println("\nWiFi Conectado.");
+
+  // Configurar SSL
+  secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
+
+  // --- SEÑAL VERDE ---
+  // Avisamos a TaskTelegram que ya puede empezar a trabajar
+  wifiSystemReady = true;
+  
+  FSMEvent e = EVENT_INIT_COMPLETE;
+  xQueueSend(fsmQueue, &e, 0);
 }
 
 void onEnterIdle() {
@@ -656,7 +668,14 @@ void TaskBluetoothCommunication(void *pvParameters) {
 
 void TaskTelegram(void *pvParameters) {
   (void) pvParameters;
-
+  
+  // --- ESPERA DE SEGURIDAD ---
+  // No hacer NADA hasta que onEnterInit termine la conexión inicial
+  while (!wifiSystemReady) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  
+  Serial.println("Telegram Task: Iniciando polling...");
   for (;;) {
     // Verificar conexión WiFi y reconectar si es necesario
     if (WiFi.status() != WL_CONNECTED) {

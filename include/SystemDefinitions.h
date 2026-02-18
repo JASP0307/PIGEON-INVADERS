@@ -75,4 +75,7 @@ typedef struct {
 float temp_X1, temp_Y1;
 float temp_X2, temp_Y2;
 
+// Bandera para sincronizar el arranque
+volatile bool wifiSystemReady = false;
+
 #endif // SYSTEM_DEFINITIONS_H

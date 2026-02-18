@@ -24,9 +24,9 @@
 
 // Credenciales Telegram
 // Obtén esto creando un bot con @BotFather en Telegram
-#define BOT_TOKEN "TU_BOT_TOKEN_AQUI" 
+#define BOT_TOKEN "8378042870:AAG3z-YlLjb98I--cp8aATP29ybx_0LAfKg" 
 // Tu ID numérico (puedes obtenerlo con el bot @myidbot) para seguridad
-#define CHAT_ID_PERMITIDO "123456789"
+#define CHAT_ID_PERMITIDO "8210739066"
 
 WiFiClientSecure secured_client;
 UniversalTelegramBot bot(BOT_TOKEN, secured_client);

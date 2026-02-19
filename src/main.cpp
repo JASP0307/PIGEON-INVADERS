@@ -1,8 +1,8 @@
 // Máquina de Estados para Arduino Mega - Robot de Desmalezado
 
 #include <Arduino.h>
-#include <queue.h>
-#include <semphr.h>
+//#include <queue.h>
+//#include <semphr.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
@@ -19,8 +19,8 @@
 #define TARGET_TOLERANCE 2.0f  // Margen de error para decir "llegué"
 
 // Credenciales Wi-Fi
-#define WIFI_SSID "NOMBRE_DE_TU_WIFI"
-#define WIFI_PASSWORD "TU_CONTRASEÑA"
+#define WIFI_SSID "FamiliaSuárez"
+#define WIFI_PASSWORD "RigobertoSuarez"
 
 // Credenciales Telegram
 // Obtén esto creando un bot con @BotFather en Telegram
@@ -95,12 +95,19 @@ void setup() {
     while (1);
   }
 
+  // Crear cola FSM
+  manualControlQueue = xQueueCreate(5, sizeof(ManualPosCmd));
+  if (manualControlQueue == NULL) {
+    Serial.println("Error: No se pudo crear la cola manualControlQueue.");
+    while (1);
+  }
+
   pinMode(Pinout::TiraLED::LEDs, OUTPUT);
  
   // Crear tareas
   xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     6144, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(TaskBluetoothCommunication, "Bluetooth",    4096, NULL, 2, NULL, 0);
+  //xTaskCreatePinnedToCore(TaskBluetoothCommunication, "Bluetooth",    4096, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          4096, NULL, 3, NULL, 1);
   xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
   
@@ -170,10 +177,10 @@ bool hasReachedTarget() {
 
 void updatePatternLogic() {
     if (!patCtx.active) return;
-
+    
     // Solo calculamos el siguiente paso si ya llegamos al anterior
     if (hasReachedTarget()) {
-        
+        float nextX, nextY;
         switch (patCtx.currentType) {
             
             // --- PATRÓN 1: RECUADRO (PREVIEW) ---
@@ -198,7 +205,7 @@ void updatePatternLogic() {
             case PATTERN_ZIGZAG_HORIZ:
                 // Algoritmo: Mover X a un extremo, bajar Y un poco, Mover X al otro extremo...
                 // stepIndex aquí representará las líneas verticales avanzadas
-                float nextY = patCtx.minY + (patCtx.stepIndex * ZIGZAG_STEP_SIZE);
+                nextY = patCtx.minY + (patCtx.stepIndex * ZIGZAG_STEP_SIZE);
                 
                 if (nextY > patCtx.maxY) {
                      // Terminamos el barrido, volver a home
@@ -218,11 +225,10 @@ void updatePatternLogic() {
                     patCtx.stepIndex++;
                 }
                 break;
-
             // --- PATRÓN 3: ZIGZAG VERTICAL ---
             case PATTERN_ZIGZAG_VERT:
-                 // Similar al horizontal pero invirtiendo ejes
-                float nextX = patCtx.minX + (patCtx.stepIndex * ZIGZAG_STEP_SIZE);
+                // Similar al horizontal pero invirtiendo ejes
+                nextX = patCtx.minX + (patCtx.stepIndex * ZIGZAG_STEP_SIZE);
                 
                 if (nextX > patCtx.maxX) {
                     SERVO_X.setTarget(patCtx.minX);
@@ -264,7 +270,7 @@ void handleNewMessages(int numNewMessages) {
     if (text == "/start") {
       FSMEvent e = EVENT_START_COMMAND;
       xQueueSend(fsmQueue, &e, 0);
-      bot.sendMessage(chat_id, "Iniciando Pigeon Invaders...", "");
+      bot.sendMessageWithReplyKeyboard(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown", "", keyboardJson);
     }
     else if (text == "/stop") {
       FSMEvent e = EVENT_STOP_COMMAND;
@@ -277,11 +283,17 @@ void handleNewMessages(int numNewMessages) {
       String stateStr = SystemStateToString(currentState);
       bot.sendMessage(chat_id, "Estado actual: " + stateStr, "");
     }
+    else if (text == "/pigeonsim") {
+      FSMEvent e = EVENT_PIGEON_DETECTED;
+      xQueueSend(fsmQueue, &e, 0);
+      bot.sendMessage(chat_id, "¡Paloma Detectada!", "");
+    }
     else if (text == "/help") {
       String welcome = "Comandos Pigeon Invaders:\n";
       welcome += "/start : Iniciar monitoreo\n";
       welcome += "/stop : Detener sistema\n";
       welcome += "/status : Ver estado actual\n";
+      welcome += "/pigeonsim : Simular detección de paloma\n";
       bot.sendMessage(chat_id, welcome, "");
     }
   }
@@ -289,7 +301,7 @@ void handleNewMessages(int numNewMessages) {
 
 void onEnterInit() {
   Serial.println("Entrando en STATE_INITIALIZING");
-  servos_init();
+  //servos_init();
 
   // 1. Conexión WiFi inicial
   Serial.print("Conectando a WiFi ");
@@ -319,7 +331,7 @@ void onEnterInit() {
   // --- SEÑAL VERDE ---
   // Avisamos a TaskTelegram que ya puede empezar a trabajar
   wifiSystemReady = true;
-  
+  Laser_01.on();
   FSMEvent e = EVENT_INIT_COMPLETE;
   xQueueSend(fsmQueue, &e, 0);
 }
@@ -329,14 +341,17 @@ void onEnterIdle() {
   //vTaskDelay(pdMS_TO_TICKS(1000));
   Laser_01.off();
   digitalWrite(Pinout::TiraLED::LEDs, LOW);
-  xTimerStop(monitoringTimer, 0);
+  //xTimerStop(monitoringTimer, 0);
 }
 
 void onEnterMonitoring(){
+  Serial.println("Entrando en STATE_MONITORING");
+  Laser_01.off();
   xTimerStart(monitoringTimer, 0);
 }
   
 void onEnterAttacking(){
+  Serial.println("Entrando en STATE_ATTACKING");
   xTimerStop(monitoringTimer, 0);
   
   // Lógica para elegir patrón aleatorio o rotativo
@@ -346,10 +361,12 @@ void onEnterAttacking(){
 }
 
 void onEnterCalibSetLL(){
+  Serial.println("Entrando en STATE_CALIB_SET_LL");
   Laser_01.on();
 }
 
 void onEnterCalibSetUR(){
+  Serial.println("Entrando en STATE_CALIB_SET_UR");
   temp_X1 = SERVO_X.getPosition();
   temp_Y1 = SERVO_Y.getPosition();
         
@@ -357,10 +374,11 @@ void onEnterCalibSetUR(){
 }
 
 void onEnterCalibPrev(){
-  temp_X2 = SERVO_X.getPosition();
-  temp_Y2 = SERVO_Y.getPosition();
-  Serial.println("Punto 2 capturado.");
-
+  Serial.println("Entrando en STATE_CALIB_PREVIEW");
+  //temp_X2 = SERVO_X.getPosition();
+  //temp_Y2 = SERVO_Y.getPosition();
+  //Serial.println("Punto 2 capturado.");
+  Laser_01.on();
   g_calibMinX = min(temp_X1, temp_X2);
   g_calibMaxX = max(temp_X1, temp_X2);
   
@@ -383,7 +401,7 @@ void TaskFSM(void *pvParameters) {
 
   // Crear el timer (5 minutos, one-shot o auto-reload según prefieras logicamente)
   // Aquí uso auto-reload false para controlarlo manualmente en los estados
-  monitoringTimer = xTimerCreate("MonTimer", pdMS_TO_TICKS(300000), pdFALSE, 0, monitoringTimerCallback);
+  monitoringTimer = xTimerCreate("MonTimer", pdMS_TO_TICKS(3000), pdFALSE, 0, monitoringTimerCallback);
   
   // Establecer estado inicial y ejecutar su acción de entrada
   setState(currentState);
@@ -409,9 +427,9 @@ void TaskFSM(void *pvParameters) {
         case STATE_MONITORING:
             if (receivedEvent == EVENT_STOP_COMMAND) newState = STATE_IDLE;
             else if (receivedEvent == EVENT_PIGEON_DETECTED || receivedEvent == EVENT_MANUAL_COMMAND) newState = STATE_ATTACKING;
-            else if (receivedEvent == EVENT_TIMER_EXPIRED || receivedEvent == EVENT_NO_PIGEON){
-              newState = STATE_MONITORING;
-              onEnterMonitoring();
+            else if (receivedEvent == EVENT_NO_PIGEON || receivedEvent == EVENT_TIMER_EXPIRED) {
+              newState = STATE_MONITORING; // Reiniciar monitoreo (puede ser útil para resetear el timer o alguna variable de conteo)
+              onEnterMonitoring(); // Reiniciar monitoreo para el próximo ciclo
             }
             break;
             
@@ -451,16 +469,8 @@ void TaskFSM(void *pvParameters) {
               case STATE_CALIB_PREVIEW: onEnterCalibPrev(); break;
           }
       }
+      currentState = newState; // Actualizar estado actual
     }
-
-    // GESTIÓN DE TIMEOUTS
-    currentState = getState();
-    if (currentState == STATE_MONITORING) {
-        if ((xTaskGetTickCount() - monitoringStartTime) >= pdMS_TO_TICKS(300000)) {
-            FSMEvent e = EVENT_TIMER_EXPIRED;
-            xQueueSend(fsmQueue, &e, 0);
-        }
-    }  
   }
 }
 
@@ -475,6 +485,7 @@ void TaskServoControl(void *pvParameters) {
 
   for (;;) {
     // A. ¿Hay un patrón automático activo?
+    
     if (patCtx.active) {
        updatePatternLogic();
        xQueueReset(manualControlQueue); 
@@ -497,7 +508,8 @@ void TaskServoControl(void *pvParameters) {
     // C. Mover los servos físicamente hacia el objetivo actual
     SERVO_X.update();
     SERVO_Y.update();
-    vTaskDelay(pdMS_TO_TICKS(75)); 
+    
+    vTaskDelay(pdMS_TO_TICKS(50)); 
   }
 }
 
@@ -563,6 +575,13 @@ void TaskComms(void *pvParameters) {
           Serial.println("DEBUG: Comando CONFIRM_UR recibido");
 
           FSMEvent e = EVENT_CONFIRM_POINT;
+          xQueueSend(fsmQueue, &e, 0);;
+      }
+      else if (msg.equals("SimulatePigeon")) {
+          // Extraer el valor después de "Y:"
+          Serial.println("DEBUG: Comando SimulatePigeon recibido");
+
+          FSMEvent e = EVENT_PIGEON_DETECTED;
           xQueueSend(fsmQueue, &e, 0);;
       }
 

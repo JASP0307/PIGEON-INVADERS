@@ -64,7 +64,7 @@ typedef struct {
 
 PatternContext patCtx;
 
-int g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY;
+int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100;
 
 
 typedef struct {
@@ -72,10 +72,13 @@ typedef struct {
     int value;   // El valor del ángulo/posición
 } ManualPosCmd;
 
-float temp_X1, temp_Y1;
-float temp_X2, temp_Y2;
+int temp_X1 = 0, temp_Y1 = 100;
+int temp_X2 = 100, temp_Y2 = 0;
 
 // Bandera para sincronizar el arranque
 volatile bool wifiSystemReady = false;
+// "resize_keyboard": true -> Hace que los botones tengan un tamaño normal y no ocupen media pantalla
+// "one_time_keyboard": false -> El teclado se queda ahí siempre, no desaparece al pulsarlo
+const String keyboardJson = "{\"keyboard\":[[\"/start\", \"/stop\"],[\"/status\"]], \"resize_keyboard\":true, \"one_time_keyboard\":true}";
 
 #endif // SYSTEM_DEFINITIONS_H

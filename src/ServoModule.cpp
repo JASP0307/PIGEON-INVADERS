@@ -2,7 +2,7 @@
 
 // Constructor: Ahora inicializa _isAttached a false.
 ServoModule::ServoModule(uint8_t pin) 
-    : _pin(pin), _currentAngle(170), _targetAngle(170), _isAttached(false) {
+    : _pin(pin), _currentAngle(0), _targetAngle(0), _isAttached(false) {
     // El servo empieza "dormido" (detached).
 }
 
@@ -26,26 +26,38 @@ void ServoModule::setTarget(int angle) {
 
 // update(): Ahora es el responsable de "dormir" al servo cuando llega a su destino.
 bool ServoModule::update() {
-    // Si el servo no está activo, no hay nada que hacer. Salida rápida.
+    // Si no se ha inicializado el attach, salimos
     if (!_isAttached) {
-        return false;
+        //Opcional: Auto-recuperación si quieres que se conecte solo al llamar update
+        _servo.attach(_pin); 
+        _isAttached = true;
+        return false; 
     }
 
+    // Si ya estamos en el objetivo, NO HACEMOS NADA.
+    // No escribimos, no calculamos, simplemente salimos.
+    if (_currentAngle == _targetAngle) {
+        return false; 
+    }
+    
     if (_currentAngle < _targetAngle) {
         _currentAngle++;
         _servo.write(_currentAngle);
-        return true; // Sigue en movimiento.
+        return true; 
     } 
     else if (_currentAngle > _targetAngle) {
         _currentAngle--;
         _servo.write(_currentAngle);
-        return true; // Sigue en movimiento.
+        return true; 
     } 
     else {
-        // --- Hemos llegado al destino ---
-        _servo.detach();         // <-- CAMBIO CLAVE: Apagamos el servo.
-        _isAttached = false;     // <-- CAMBIO CLAVE: Actualizamos el flag.
-        return false;            // Movimiento finalizado.
+        // --- HEMOS LLEGADO ---
+        
+        // ERROR ANTERIOR: _servo.detach();  <-- ¡ESTO CAUSABA EL TEMBLOR!
+        // ERROR ANTERIOR: _isAttached = false;
+        
+        // Mantenemos el servo conectado para que tenga fuerza y no se caiga.
+        return false; 
     }
 }
 

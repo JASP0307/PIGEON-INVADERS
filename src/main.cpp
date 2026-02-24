@@ -306,8 +306,6 @@ void procesarMovimientoManual(const String &text, const String &chat_id)
 
     if (!movimientoValido) return;
 
-    cmd.value = (cmd.cmdType == 0) ? currentPan : currentTilt;
-
     // Enviar a la cola sin bloquear
     if (xQueueSend(manualControlQueue, &cmd, 0) == pdPASS) {
         bot.sendMessage(chat_id,
@@ -324,12 +322,7 @@ void handleNewMessages(int numNewMessages) {
   for (int i = 0; i < numNewMessages; i++) {
     String chat_id = String(bot.messages[i].chat_id);
     String text = bot.messages[i].text;
-    bool callbackData = false;
-
-    if (bot.messages[i].type == "callback_query") {
-      callbackData = true;
-    }
-    
+  
 
     // Seguridad: Ignorar mensajes de extraños
     if (chat_id != CHAT_ID_PERMITIDO) {
@@ -337,8 +330,14 @@ void handleNewMessages(int numNewMessages) {
         continue;
     }
 
-    String from_name = bot.messages[i].from_name;
-    if ((getState() == STATE_CALIB_SET_LL || getState() == STATE_CALIB_SET_UR) & callbackData) {
+    if (bot.messages[i].type == "callback_query") {
+      bot.answerCallbackQuery(bot.messages[i].query_id);
+    }
+
+    if ((getState() == STATE_CALIB_SET_LL || 
+        getState() == STATE_CALIB_SET_UR) && 
+        bot.messages[i].type == "callback_query") {
+
       procesarMovimientoManual(text, chat_id);
     }
 

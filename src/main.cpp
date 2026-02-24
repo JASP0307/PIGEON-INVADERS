@@ -1,8 +1,4 @@
-// Máquina de Estados para Arduino Mega - Robot de Desmalezado
-
 #include <Arduino.h>
-//#include <queue.h>
-//#include <semphr.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
@@ -60,7 +56,6 @@ void TaskFSM(void *pvParameters);
 void TaskTelegram(void *pvParameters);
 void TaskComms(void *pvParameters);
 void TaskServoControl(void *pvParameters);
-void TaskBluetoothCommunication(void *pvParameters);
 
 // Funciones auxiliares del brazo delta
 void servos_init();
@@ -107,7 +102,6 @@ void setup() {
   // Crear tareas
   xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     6144, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
-  //xTaskCreatePinnedToCore(TaskBluetoothCommunication, "Bluetooth",    4096, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          4096, NULL, 3, NULL, 1);
   xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
   
@@ -254,10 +248,88 @@ void monitoringTimerCallback(TimerHandle_t xTimer) {
     xQueueSend(fsmQueue, &e, 0); 
 }
 
+void enviarTecladoCalibracion(String chat_id) {
+  // Construimos el teclado en formato JSON
+  String keyboardJson = "[";
+  // Fila 1: Arriba
+  keyboardJson += "[{\"text\":\"⬆️ Subir\", \"callback_data\":\"TILT_UP\"}],";
+  // Fila 2: Izquierda, Guardar, Derecha
+  keyboardJson += "[{\"text\":\"⬅️ Izq\", \"callback_data\":\"PAN_LEFT\"},";
+  keyboardJson += "{\"text\":\"💾 Guardar Límite\", \"callback_data\":\"SAVE_LIMIT\"},";
+  keyboardJson += "{\"text\":\"Der ➡️\", \"callback_data\":\"PAN_RIGHT\"}],";
+  // Fila 3: Abajo
+  keyboardJson += "[{\"text\":\"⬇️ Bajar\", \"callback_data\":\"TILT_DOWN\"}]";
+  keyboardJson += "]";
+
+  bot.sendMessageWithInlineKeyboard(chat_id, "Modo Calibración Activado. Usa las flechas para mover el láser:", "", keyboardJson);
+}
+
+void procesarMovimientoManual(const String &text, const String &chat_id)
+{
+    ManualPosCmd cmd;
+    bool movimientoValido = true;
+
+    if (text == "TILT_DOWN") {
+        currentTilt -= stepSize;
+        cmd.cmdType = 1;   // Eje Y
+        cmd.value = currentTilt;
+    }
+    else if (text == "TILT_UP") {
+        currentTilt += stepSize;
+        cmd.cmdType = 1;   // Eje Y
+        cmd.value = currentTilt;
+    }
+    else if (text == "PAN_LEFT") {
+        currentPan -= stepSize;
+        cmd.cmdType = 0;   // Eje X
+        cmd.value = currentPan;
+    }
+    else if (text == "PAN_RIGHT") {
+        currentPan += stepSize;
+        cmd.cmdType = 0;   // Eje X
+        cmd.value = currentPan;
+    }
+    else if (text == "SAVE_LIMIT") {
+        FSMEvent e = EVENT_CONFIRM_POINT;
+        xQueueSend(fsmQueue, &e, 0);
+
+        bot.sendMessage(chat_id,
+            "Límite guardado en:\nPan: " + String(currentPan) +
+            "°\nTilt: " + String(currentTilt) + "°",
+            "");
+
+        return;  // No continuar
+    }
+    else {
+        movimientoValido = false;
+    }
+
+    if (!movimientoValido) return;
+
+    cmd.value = (cmd.cmdType == 0) ? currentPan : currentTilt;
+
+    // Enviar a la cola sin bloquear
+    if (xQueueSend(manualControlQueue, &cmd, 0) == pdPASS) {
+        bot.sendMessage(chat_id,
+            "Posición actual:\nPan: " + String(currentPan) +
+            "°\nTilt: " + String(currentTilt) + "°",
+            "");
+    }
+    else {
+        bot.sendMessage(chat_id, "⚠ Cola ocupada. Intente nuevamente.", "");
+    }
+}
+
 void handleNewMessages(int numNewMessages) {
   for (int i = 0; i < numNewMessages; i++) {
     String chat_id = String(bot.messages[i].chat_id);
     String text = bot.messages[i].text;
+    bool callbackData = false;
+
+    if (bot.messages[i].type == "callback_query") {
+      callbackData = true;
+    }
+    
 
     // Seguridad: Ignorar mensajes de extraños
     if (chat_id != CHAT_ID_PERMITIDO) {
@@ -266,11 +338,14 @@ void handleNewMessages(int numNewMessages) {
     }
 
     String from_name = bot.messages[i].from_name;
+    if ((getState() == STATE_CALIB_SET_LL || getState() == STATE_CALIB_SET_UR) & callbackData) {
+      procesarMovimientoManual(text, chat_id);
+    }
 
     if (text == "/start") {
       FSMEvent e = EVENT_START_COMMAND;
       xQueueSend(fsmQueue, &e, 0);
-      bot.sendMessageWithReplyKeyboard(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown", "", keyboardJson);
+      bot.sendMessage(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown");
     }
     else if (text == "/stop") {
       FSMEvent e = EVENT_STOP_COMMAND;
@@ -287,6 +362,11 @@ void handleNewMessages(int numNewMessages) {
       FSMEvent e = EVENT_PIGEON_DETECTED;
       xQueueSend(fsmQueue, &e, 0);
       bot.sendMessage(chat_id, "¡Paloma Detectada!", "");
+    }
+    else if (text == "/calibrar") {
+      FSMEvent e = EVENT_ENTER_CALIBRATION;
+      xQueueSend(fsmQueue, &e, 0);
+      enviarTecladoCalibracion(chat_id);
     }
     else if (text == "/help") {
       String welcome = "Comandos Pigeon Invaders:\n";
@@ -341,7 +421,7 @@ void onEnterIdle() {
   //vTaskDelay(pdMS_TO_TICKS(1000));
   Laser_01.off();
   digitalWrite(Pinout::TiraLED::LEDs, LOW);
-  //xTimerStop(monitoringTimer, 0);
+  xTimerStop(monitoringTimer, 0);
 }
 
 void onEnterMonitoring(){
@@ -375,10 +455,9 @@ void onEnterCalibSetUR(){
 
 void onEnterCalibPrev(){
   Serial.println("Entrando en STATE_CALIB_PREVIEW");
-  //temp_X2 = SERVO_X.getPosition();
-  //temp_Y2 = SERVO_Y.getPosition();
-  //Serial.println("Punto 2 capturado.");
-  Laser_01.on();
+  temp_X2 = SERVO_X.getPosition();
+  temp_Y2 = SERVO_Y.getPosition();
+  Serial.println("Punto 2 capturado.");
   g_calibMinX = min(temp_X1, temp_X2);
   g_calibMaxX = max(temp_X1, temp_X2);
   
@@ -493,16 +572,17 @@ void TaskServoControl(void *pvParameters) {
     // B. Si NO hay patrón, verificamos si hay comandos manuales
     else {
        // Revisamos la cola.
-       if (xQueueReceive(manualControlQueue, &receivedCmd, 0) == pdTRUE) {
-           
-           if (receivedCmd.cmdType == 0) {
-               // Comando para X
-               SERVO_X.setTarget((int)receivedCmd.value);
-           } else {
-               // Comando para Y
-               SERVO_Y.setTarget((int)receivedCmd.value);
-           }
-       }
+      if (xQueueReceive(manualControlQueue, &receivedCmd, 0) == pdTRUE) {
+          
+          if (receivedCmd.cmdType == 0) {
+              // Comando para X
+              SERVO_X.setTarget((int)receivedCmd.value);
+              
+          } else {
+              // Comando para Y
+              SERVO_Y.setTarget((int)receivedCmd.value);
+          }
+      }
     }
 
     // C. Mover los servos físicamente hacia el objetivo actual
@@ -586,7 +666,7 @@ void TaskComms(void *pvParameters) {
       }
 
       else {
-        //Serial.println("ERROR,UNKNOWN_CMD");
+        Serial.println("ERROR,UNKNOWN_CMD");
       }
     }
     
@@ -600,88 +680,6 @@ void TaskComms(void *pvParameters) {
     }
 
     vTaskDelay(pdMS_TO_TICKS(100));
-  }
-}
-
-void TaskBluetoothCommunication(void *pvParameters) {
-  (void) pvParameters;
-  String incomingString = "";
-  SystemState stateToReport;
-
-  // Temporizador para enviar toda la telemetría a un intervalo fijo
-  uint32_t lastTelemetrySendTime = 0;
-  const uint32_t TELEMETRY_INTERVAL_MS = 1000; // Enviar todo cada 1 segundo
-
-  for (;;) {
-    // --- Parte 1: Escuchar comandos ---
-    while (btSerial.available() > 0) {
-      char c = btSerial.read();
-      if (c == '\n') {
-        incomingString.trim(); 
-        if (incomingString == "START") {
-          //Serial.println("DEBUG: Comando START recibido");
-          FSMEvent e = EVENT_START_COMMAND;
-          xQueueSend(fsmQueue, &e, 0);
-
-        } else if (incomingString == "STOP") {
-          //Serial.println("DEBUG: Comando STOP recibido");
-          FSMEvent e = EVENT_STOP_COMMAND;
-          xQueueSend(fsmQueue, &e, 0);
-
-        } else if (incomingString.startsWith("X_POS:")) {
-          // Extraer el valor después de "X_POS:"
-          String valStr = incomingString.substring(6); // 6 es la longitud de "X_POS:"
-          ManualPosCmd cmd;
-          cmd.cmdType = 0; // 0 para Eje X
-          cmd.value = valStr.toInt();
-
-          // Enviar a la cola del Servo (no bloqueante)
-          xQueueSend(manualControlQueue, &cmd, 0);
-
-          Serial.println(cmd.value);
-
-        } else if (incomingString.startsWith("Y_POS:")) {
-          // Extraer el valor después de "Y_POS:"
-          String valStr = incomingString.substring(6); // 6 es la longitud de "Y_POS:"
-          ManualPosCmd cmd;
-          cmd.cmdType = 1; // 1 para Eje Y
-          cmd.value = valStr.toInt();
-
-          // Enviar a la cola del Servo (no bloqueante)
-          xQueueSend(manualControlQueue, &cmd, 0);
-
-          Serial.println(cmd.value);
-
-        } else if (incomingString == "CONFIRM_LL") {
-          Serial.println("DEBUG: Comando CONFIRM_LL recibido");
-
-          FSMEvent e = EVENT_CONFIRM_POINT;
-          xQueueSend(fsmQueue, &e, 0);
-
-        } else if (incomingString == "CONFIRM_UR") {
-          Serial.println("DEBUG: Comando CONFIRM_UR recibido");
-
-          FSMEvent e = EVENT_CONFIRM_POINT;
-          xQueueSend(fsmQueue, &e, 0);
-
-        }
-        incomingString = "";
-      } else {
-        incomingString += c;
-      }
-    }
-
-    // --- Parte 2: Construir y enviar el paquete de telemetría periódicamente ---
-    if (xQueueReceive(telemetryQueue, &stateToReport, 0) == pdTRUE) {
-        
-        String stateStr = SystemStateToString(stateToReport);
-        String packet = "STATE:" + stateStr;
-        btSerial.println(packet);
-        
-        Serial.println("Telemetria enviada por evento: " + packet);
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(100)); 
   }
 }
 
@@ -704,19 +702,13 @@ void TaskTelegram(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(5000));
         continue;
     }
+    int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
-    // Polling a Telegram
-    if (millis() - bot_lasttime > BOT_MTBS) {
-      int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-
-      while (numNewMessages) {
-        handleNewMessages(numNewMessages);
-        numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-      }
-      bot_lasttime = millis();
+    while (numNewMessages) {
+      handleNewMessages(numNewMessages);
+      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
     }
-    
-    // IMPORTANTE: ceder tiempo al Watchdog
-    vTaskDelay(pdMS_TO_TICKS(100)); 
+
+    vTaskDelay(pdMS_TO_TICKS(BOT_MTBS)); 
   }
 }

@@ -64,8 +64,10 @@ typedef struct {
 
 PatternContext patCtx;
 
-int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100;
-
+int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100, stepSize = 2;
+int currentPan = 90;  
+int currentTilt = 90;
+bool movido = false;
 
 typedef struct {
     int cmdType; // 0 = Set X, 1 = Set Y

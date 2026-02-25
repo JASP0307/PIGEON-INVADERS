@@ -103,7 +103,7 @@ void setup() {
   xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     6144, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          4096, NULL, 3, NULL, 1);
-  xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
+  //xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
   
   Serial.println("Tareas FreeRTOS creadas");
 }
@@ -463,7 +463,7 @@ void onEnterCalibPrev(){
   g_calibMinY = min(temp_Y1, temp_Y2);
   g_calibMaxY = max(temp_Y1, temp_Y2);
 
-  Serial.printf("Calibracion Final: X[%f - %f], Y[%f - %f]\n", 
+  Serial.printf("Calibracion Final: X[%i - %i], Y[%i - %i]\n", 
                 g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
   vTaskDelay(pdMS_TO_TICKS(3000));  
   startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX, g_calibMaxX, g_calibMinY, g_calibMaxY);
@@ -513,6 +513,7 @@ void TaskFSM(void *pvParameters) {
             
         case STATE_ATTACKING:
             if (receivedEvent == EVENT_ATTACK_COMPLETE) newState = STATE_MONITORING;
+            else if (receivedEvent == EVENT_STOP_COMMAND) newState = STATE_IDLE;
             break;
         
         case STATE_CALIB_SET_LL:
@@ -526,6 +527,7 @@ void TaskFSM(void *pvParameters) {
         
         case STATE_CALIB_PREVIEW:
             if (receivedEvent == EVENT_CALIBRATION_DONE) newState = STATE_IDLE;
+            else if (receivedEvent == EVENT_STOP_COMMAND) newState = STATE_IDLE;
             break;
         case STATE_ERROR:
             if (receivedEvent == EVENT_RESUME) newState = STATE_IDLE;

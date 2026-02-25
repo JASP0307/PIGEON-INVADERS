@@ -51,12 +51,6 @@ bool ServoModule::update() {
         return true; 
     } 
     else {
-        // --- HEMOS LLEGADO ---
-        
-        // ERROR ANTERIOR: _servo.detach();  <-- ¡ESTO CAUSABA EL TEMBLOR!
-        // ERROR ANTERIOR: _isAttached = false;
-        
-        // Mantenemos el servo conectado para que tenga fuerza y no se caiga.
         return false; 
     }
 }

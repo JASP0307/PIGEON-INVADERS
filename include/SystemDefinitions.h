@@ -1,6 +1,27 @@
 #ifndef SYSTEM_DEFINITIONS_H
 #define SYSTEM_DEFINITIONS_H
 
+// --- PINES EXACTOS PARA FREENOVE ESP32-S3 WROOM CAM ---
+#define PWDN_GPIO_NUM  -1
+#define RESET_GPIO_NUM -1
+#define XCLK_GPIO_NUM  15
+#define SIOD_GPIO_NUM  4
+#define SIOC_GPIO_NUM  5
+
+#define Y9_GPIO_NUM    16
+#define Y8_GPIO_NUM    17
+#define Y7_GPIO_NUM    18
+#define Y6_GPIO_NUM    12
+#define Y5_GPIO_NUM    10
+#define Y4_GPIO_NUM    8
+#define Y3_GPIO_NUM    9
+#define Y2_GPIO_NUM    11
+#define VSYNC_GPIO_NUM 6
+#define HREF_GPIO_NUM  7
+#define PCLK_GPIO_NUM  13
+
+#define MONITORING_INTERVAL_MS (1 * 60 * 1000) // 5 minutos en milisegundos
+
 // Este archivo centraliza todas las definiciones lógicas, constantes de comportamiento,
 // y enumeraciones para la Máquina de Estados Finitos (FSM) del robot.
 
@@ -11,6 +32,7 @@ enum SystemState {
   STATE_INITIALIZING,      // Encendido, conexión WiFi y Telegram
   STATE_IDLE,              // Esperando comando Start (Láser apagado)
   STATE_MONITORING,        // Vigilancia intermitente (Loop de 5 min)
+  STATE_TAKING_PICTURE,    // Tomando foto y procesando evidencia
   STATE_ATTACKING,         // Láser ON, moviendo servos, reporte
   STATE_CALIB_SET_LL,      // Calibración: Esperando definir Límite Inferior Izquierdo
   STATE_CALIB_SET_UR,      // Calibración: Esperando definir Límite Superior Derecho
@@ -28,6 +50,7 @@ typedef enum {
     EVENT_STOP_COMMAND,          // Usuario envía "Stop"
     EVENT_MANUAL_COMMAND,        // Usuario envía "Comando de ataque"
     EVENT_TIMER_EXPIRED,         // Pasaron los 5 minutos de espera
+    EVENT_PROCESSING_COMPLETE,   // Terminó de procesar la foto
     EVENT_PIGEON_DETECTED,       // Visión artificial confirma paloma
     EVENT_NO_PIGEON,             // Visión artificial confirma zona limpia
     EVENT_ATTACK_COMPLETE,       // Terminó el patrón de servos y reporte
@@ -73,6 +96,13 @@ typedef struct {
     int cmdType; // 0 = Set X, 1 = Set Y
     int value;   // El valor del ángulo/posición
 } ManualPosCmd;
+
+typedef struct {
+  camera_fb_t* fotoAntes;
+  camera_fb_t* fotoDespues;
+  unsigned long timestamp;
+} EvidenciaAtaque;
+
 
 int temp_X1 = 0, temp_Y1 = 100;
 int temp_X2 = 100, temp_Y2 = 0;

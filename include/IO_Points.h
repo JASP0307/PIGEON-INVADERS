@@ -17,7 +17,7 @@ namespace Pinout {
     // SUBSISTEMA DE ACTUACIÓN (LASER)
     //----------------------------------------------------------------
     namespace Laser {
-        constexpr uint8_t Laser_1 = 23;
+        constexpr uint8_t Laser_1 = 48;
     }
 
     //================================================================

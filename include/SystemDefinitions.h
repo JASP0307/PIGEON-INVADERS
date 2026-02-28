@@ -20,7 +20,7 @@
 #define HREF_GPIO_NUM  7
 #define PCLK_GPIO_NUM  13
 
-#define MONITORING_INTERVAL_MS (1 * 60 * 1000) // 5 minutos en milisegundos
+#define MONITORING_INTERVAL_MS (10 * 60 * 1000) // 5 minutos en milisegundos
 
 // Este archivo centraliza todas las definiciones lógicas, constantes de comportamiento,
 // y enumeraciones para la Máquina de Estados Finitos (FSM) del robot.
@@ -50,6 +50,7 @@ typedef enum {
     EVENT_STOP_COMMAND,          // Usuario envía "Stop"
     EVENT_MANUAL_COMMAND,        // Usuario envía "Comando de ataque"
     EVENT_TIMER_EXPIRED,         // Pasaron los 5 minutos de espera
+    EVENT_TAKE_PICTURE,          // Usuario solicita tomar foto manualmente
     EVENT_PROCESSING_COMPLETE,   // Terminó de procesar la foto
     EVENT_PIGEON_DETECTED,       // Visión artificial confirma paloma
     EVENT_NO_PIGEON,             // Visión artificial confirma zona limpia
@@ -103,6 +104,28 @@ typedef struct {
   unsigned long timestamp;
 } EvidenciaAtaque;
 
+enum class BotState {
+  IDLE,           // Sistema detenido
+  RUNNING,        // Vigilando activamente
+  CALIBRATING_1,  // Moviendo a esquina INF-IZQ
+  CALIBRATING_2,  // Moviendo a esquina SUP-DER
+  CONFIRMING_CAL  // Mostrando resumen para confirmar
+};
+
+// Estado global del bot
+struct BotContext {
+  BotState state = BotState::IDLE;
+  String   activeChatId = "";
+  int      msgIdToEdit  = -1;   // ID del mensaje con el teclado activo
+  int      panAngle     = 90;   // Posición actual servo pan
+  int      tiltAngle    = 90;   // Posición actual servo tilt
+  int      cal1Pan      = -1;   // Límite guardado esquina 1
+  int      cal1Tilt     = -1;
+  int      cal2Pan      = -1;   // Límite guardado esquina 2
+  int      cal2Tilt     = -1;
+};
+
+extern BotContext botCtx;
 
 int temp_X1 = 0, temp_Y1 = 100;
 int temp_X2 = 100, temp_Y2 = 0;

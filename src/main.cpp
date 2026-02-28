@@ -19,8 +19,10 @@
 // Credenciales Wi-Fi
 #define WIFI_SSID "FamiliaSuárez"
 #define WIFI_PASSWORD "RigobertoSuarez"
-// Estructura para pasar el "paquete de evidencia"
+//#define WIFI_SSID "CLAROV6RCY"
+//#define WIFI_PASSWORD "48575443AFC7839E"
 
+// Estructura para pasar el "paquete de evidencia"
 // Credenciales Telegram
 // Obtén esto creando un bot con @BotFather en Telegram
 #define BOT_TOKEN "8378042870:AAG3z-YlLjb98I--cp8aATP29ybx_0LAfKg" 
@@ -327,6 +329,22 @@ void enviarTecladoCalibracion(String chat_id) {
   bot.sendMessageWithInlineKeyboard(chat_id, "Modo Calibración Activado. Usa las flechas para mover el láser:", "", keyboardJson);
 }
 
+void enviarMenu(String chat_id) {
+  // Construimos el teclado en formato JSON
+  String keyboardJson = "[";
+  // Fila 1: Arriba
+  keyboardJson += "[{\"text\":\"🟢 Start\", \"callback_data\":\"START\"},";
+  keyboardJson += "{\"text\":\"🔴 Stop\", \"callback_data\":\"STOP\"}],";
+  keyboardJson += "[{\"text\":\"📸 Foto\", \"callback_data\":\"TAKE_PICTURE\"},";
+  keyboardJson += "{\"text\":\"🕊️ Simular Paloma \", \"callback_data\":\"PIGEONSIM\"}],";
+  keyboardJson += "[{\"text\":\"📊 Estado\", \"callback_data\":\"STATUS\"},";
+  keyboardJson += "{\"text\":\"⚙️ Calibrar\", \"callback_data\":\"CALIBRATE\"}],";
+  keyboardJson += "[{\"text\":\"❓ Ayuda\", \"callback_data\":\"HELP\"}]";
+  keyboardJson += "]";
+
+  bot.sendMessageWithInlineKeyboard(chat_id, "Menú Principal:", "", keyboardJson);
+}
+
 void procesarMovimientoManual(const String &text, const String &chat_id)
 {
     ManualPosCmd cmd;
@@ -381,20 +399,65 @@ void procesarMovimientoManual(const String &text, const String &chat_id)
     }
 }
 
+void procesarComandos(const String &text, const String &chat_id)
+{
+    ManualPosCmd cmd;
+
+    if (text == "START") {
+        FSMEvent e = EVENT_START_COMMAND;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown");
+    }
+    else if (text == "STOP") {
+        FSMEvent e = EVENT_STOP_COMMAND;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "Sistema DETENIDO.", "");
+    }
+    else if (text == "STATUS") {
+        SystemState currentState = getState(); 
+        String stateStr = SystemStateToString(currentState);
+        bot.sendMessage(chat_id, "Estado actual: " + stateStr, "");
+    }
+    else if (text == "PIGEONSIM") {
+        FSMEvent e = EVENT_PIGEON_DETECTED;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "¡Paloma Detectada!", "");
+    }
+    else if (text == "CALIBRATE") {
+        FSMEvent e = EVENT_ENTER_CALIBRATION;
+        xQueueSend(fsmQueue, &e, 0);
+        enviarTecladoCalibracion(chat_id);
+    }
+    else if (text == "TAKE_PICTURE") {
+        FSMEvent e = EVENT_TAKE_PICTURE; 
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "¡Foto tomada y enviada!", "");
+    }
+    else if (text == "HELP") {
+        String welcome = "Comandos Pigeon Invaders:\n";
+        welcome += "/start : Iniciar monitoreo\n";
+        welcome += "/stop : Detener sistema\n";
+        welcome += "/status : Ver estado actual\n";
+        welcome += "/pigeonsim : Simular detección de paloma\n";
+        welcome += "/calibrate : Entrar en modo calibración\n";
+        welcome += "/takepicture : Tomar y enviar foto manualmente\n";
+        bot.sendMessage(chat_id, welcome, "");
+    }
+    else {
+        bot.sendMessage(chat_id, "Comando no reconocido.", "");
+    }
+}
+
 void handleNewMessages(int numNewMessages) {
   for (int i = 0; i < numNewMessages; i++) {
     String chat_id = String(bot.messages[i].chat_id);
     String text = bot.messages[i].text;
-  
+    bool MenuSent = false;
 
     // Seguridad: Ignorar mensajes de extraños
     if (chat_id != CHAT_ID_PERMITIDO) {
         bot.sendMessage(chat_id, "Acceso denegado.", "");
         continue;
-    }
-
-    if (bot.messages[i].type == "callback_query") {
-      bot.answerCallbackQuery(bot.messages[i].query_id);
     }
 
     if ((getState() == STATE_CALIB_SET_LL || 
@@ -404,39 +467,9 @@ void handleNewMessages(int numNewMessages) {
       procesarMovimientoManual(text, chat_id);
     }
 
-    if (text == "/start") {
-      FSMEvent e = EVENT_START_COMMAND;
-      xQueueSend(fsmQueue, &e, 0);
-      bot.sendMessage(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown");
-    }
-    else if (text == "/stop") {
-      FSMEvent e = EVENT_STOP_COMMAND;
-      xQueueSend(fsmQueue, &e, 0);
-      bot.sendMessage(chat_id, "Sistema DETENIDO.", "");
-    }
-    else if (text == "/status") {
-      // Pedimos el estado actual de forma thread-safe
-      SystemState currentState = getState(); 
-      String stateStr = SystemStateToString(currentState);
-      bot.sendMessage(chat_id, "Estado actual: " + stateStr, "");
-    }
-    else if (text == "/pigeonsim") {
-      FSMEvent e = EVENT_PIGEON_DETECTED;
-      xQueueSend(fsmQueue, &e, 0);
-      bot.sendMessage(chat_id, "¡Paloma Detectada!", "");
-    }
-    else if (text == "/calibrar") {
-      FSMEvent e = EVENT_ENTER_CALIBRATION;
-      xQueueSend(fsmQueue, &e, 0);
-      enviarTecladoCalibracion(chat_id);
-    }
-    else if (text == "/help") {
-      String welcome = "Comandos Pigeon Invaders:\n";
-      welcome += "/start : Iniciar monitoreo\n";
-      welcome += "/stop : Detener sistema\n";
-      welcome += "/status : Ver estado actual\n";
-      welcome += "/pigeonsim : Simular detección de paloma\n";
-      bot.sendMessage(chat_id, welcome, "");
+    if (bot.messages[i].type == "callback_query") {
+      procesarComandos(text, chat_id);
+      bot.answerCallbackQuery(bot.messages[i].query_id);
     }
   }
 }
@@ -692,12 +725,14 @@ void TaskFSM(void *pvParameters) {
         case STATE_IDLE:
             if (receivedEvent == EVENT_START_COMMAND) newState = STATE_MONITORING;
             else if (receivedEvent == EVENT_ENTER_CALIBRATION) newState = STATE_CALIB_SET_LL;
+            else if (receivedEvent == EVENT_TAKE_PICTURE) newState = STATE_TAKING_PICTURE;
             break;
 
         case STATE_MONITORING:
             if (receivedEvent == EVENT_STOP_COMMAND) newState = STATE_IDLE;
             else if (receivedEvent == EVENT_PIGEON_DETECTED || receivedEvent == EVENT_MANUAL_COMMAND) newState = STATE_ATTACKING;
             else if (receivedEvent == EVENT_NO_PIGEON || receivedEvent == EVENT_TIMER_EXPIRED) newState = STATE_TAKING_PICTURE;
+            else if (receivedEvent == EVENT_TAKE_PICTURE) newState = STATE_TAKING_PICTURE;
             break;
         case STATE_TAKING_PICTURE:
             if (receivedEvent == EVENT_PROCESSING_COMPLETE) newState = STATE_MONITORING;
@@ -885,7 +920,7 @@ void TaskTelegram(void *pvParameters) {
   while (!wifiSystemReady) {
       vTaskDelay(pdMS_TO_TICKS(100));
   }
-  
+  bool firstRun = true;
   Serial.println("Telegram Task: Iniciando polling...");
   for (;;) {
     // Verificar conexión WiFi y reconectar si es necesario
@@ -902,7 +937,10 @@ void TaskTelegram(void *pvParameters) {
       handleNewMessages(numNewMessages);
       numNewMessages = bot.getUpdates(bot.last_message_received + 1);
     }
-
+    if (getState() == STATE_IDLE && firstRun) {
+      enviarMenu(CHAT_ID_PERMITIDO);
+      firstRun = false;
+    }
     vTaskDelay(pdMS_TO_TICKS(BOT_MTBS)); 
   }
 }

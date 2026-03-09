@@ -13,14 +13,14 @@
 
 #define btSerial Serial1
 
-#define ZIGZAG_STEP_SIZE 10.0f // Cuánto avanza en el eje secundario
-#define TARGET_TOLERANCE 2.0f  // Margen de error para decir "llegué"
+#define ZIGZAG_STEP_SIZE 1.0f // Cuánto avanza en el eje secundario
+#define TARGET_TOLERANCE 0.1f  // Margen de error para decir "llegué"
 
 // Credenciales Wi-Fi
-#define WIFI_SSID "FamiliaSuárez"
-#define WIFI_PASSWORD "RigobertoSuarez"
-//#define WIFI_SSID "CLAROV6RCY"
-//#define WIFI_PASSWORD "48575443AFC7839E"
+//#define WIFI_SSID "FamiliaSuárez"
+//#define WIFI_PASSWORD "RigobertoSuarez"
+#define WIFI_SSID "CLAROV6RCY"
+#define WIFI_PASSWORD "48575443AFC7839E"
 
 // Estructura para pasar el "paquete de evidencia"
 // Credenciales Telegram
@@ -108,7 +108,7 @@ void setup() {
   xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     8192, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          8192, NULL, 3, NULL, 1);
-  //xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
+  xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
   
   Serial.println("Tareas FreeRTOS creadas");
 }
@@ -361,12 +361,12 @@ void procesarMovimientoManual(const String &text, const String &chat_id)
         cmd.value = currentTilt;
     }
     else if (text == "PAN_LEFT") {
-        currentPan -= stepSize;
+        currentPan += stepSize;
         cmd.cmdType = 0;   // Eje X
         cmd.value = currentPan;
     }
     else if (text == "PAN_RIGHT") {
-        currentPan += stepSize;
+        currentPan -= stepSize;
         cmd.cmdType = 0;   // Eje X
         cmd.value = currentPan;
     }
@@ -388,11 +388,14 @@ void procesarMovimientoManual(const String &text, const String &chat_id)
     if (!movimientoValido) return;
 
     // Enviar a la cola sin bloquear
+    
     if (xQueueSend(manualControlQueue, &cmd, 0) == pdPASS) {
+      /*
         bot.sendMessage(chat_id,
             "Posición actual:\nPan: " + String(currentPan) +
             "°\nTilt: " + String(currentTilt) + "°",
             "");
+      */
     }
     else {
         bot.sendMessage(chat_id, "⚠ Cola ocupada. Intente nuevamente.", "");
@@ -444,7 +447,7 @@ void procesarComandos(const String &text, const String &chat_id)
         bot.sendMessage(chat_id, welcome, "");
     }
     else {
-        bot.sendMessage(chat_id, "Comando no reconocido.", "");
+        //bot.sendMessage(chat_id, "Comando no reconocido.", "");
     }
 }
 
@@ -558,7 +561,7 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
 
 void onEnterInit() {
   Serial.println("Entrando en STATE_INITIALIZING");
-  //servos_init();
+  servos_init();
 
   if (!initCamera()) {
         Serial.println("Sistema detenido por fallo de hardware.");

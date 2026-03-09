@@ -2,7 +2,7 @@
 
 // Constructor: Ahora inicializa _isAttached a false.
 ServoModule::ServoModule(uint8_t pin) 
-    : _pin(pin), _currentAngle(0), _targetAngle(0), _isAttached(false) {
+    : _pin(pin), _currentAngle(90), _targetAngle(90), _isAttached(false) {
     // El servo empieza "dormido" (detached).
 }
 

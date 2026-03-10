@@ -36,7 +36,8 @@ enum SystemState {
   STATE_ATTACKING,         // Láser ON, moviendo servos, reporte
   STATE_CALIB_SET_LL,      // Calibración: Esperando definir Límite Inferior Izquierdo
   STATE_CALIB_SET_UR,      // Calibración: Esperando definir Límite Superior Derecho
-  STATE_CALIB_PREVIEW,      // Calibración: Dibujando recuadro para confirmación visual
+  STATE_CALIB_SAVE,        // Calibración: Guardando datos y calculando home
+  STATE_CALIB_PREVIEW,     // Calibración: Dibujando recuadro para confirmación visual
   STATE_ERROR
 };
 
@@ -56,8 +57,10 @@ typedef enum {
     EVENT_NO_PIGEON,             // Visión artificial confirma zona limpia
     EVENT_ATTACK_COMPLETE,       // Terminó el patrón de servos y reporte
     EVENT_ENTER_CALIBRATION,     // Usuario solicita modo calibración
+    EVENT_ENTER_PREVIEW,         // Usuario solicita modo preview (solo dibujar recuadro)
     EVENT_CONFIRM_POINT,         // Usuario confirma un punto (LL o UR)
-    EVENT_CALIBRATION_DONE,       // Usuario confirma que el recuadro es correcto
+    EVENT_CALIBRATION_DONE,      // Usuario confirma que el recuadro es correcto
+    EVENT_PREVIEW_DONE,          // El patrón de preview terminó de ejecutarse
     EVENT_RESUME
 } FSMEvent;
 
@@ -82,13 +85,30 @@ typedef struct {
     int direction;       // 1 o -1 (para saber si vamos o venimos en el zigzag)
     float currentX;      // Posición actual X calculada
     float currentY;      // Posición actual Y calculada
+    int areaPhase;      // 0 = primera área, 1 = segunda área
+    int targetArea[2];  // Índices de las dos áreas a atacar
     // Límites locales copiados de la calibración global
     float minX, maxX, minY, maxY; 
 } PatternContext;
 
 PatternContext patCtx;
 
-int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100, stepSize = 1;
+//int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100, stepSize = 2, stepSizefast = 10;
+int stepSize = 2, stepSizefast = 10; 
+
+// 0 = Área 1, 1 = Área 2
+const int AREAS = 2;
+int AREA_ACTUAL = 0; 
+
+// Arreglos para guardar los datos de 2 áreas [Área 1, Área 2]
+int g_calibMinX[AREAS] = {0, 0};
+int g_calibMaxX[AREAS] = {100, 100};
+int g_calibMinY[AREAS] = {0, 0};
+int g_calibMaxY[AREAS] = {100, 100};
+
+int g_homeX[AREAS] = {90, 90};
+int g_homeY[AREAS] = {90, 90};
+
 int currentPan = 90;  
 int currentTilt = 90;
 bool movido = false;
@@ -112,28 +132,15 @@ enum class BotState {
   CONFIRMING_CAL  // Mostrando resumen para confirmar
 };
 
-// Estado global del bot
-struct BotContext {
-  BotState state = BotState::IDLE;
-  String   activeChatId = "";
-  int      msgIdToEdit  = -1;   // ID del mensaje con el teclado activo
-  int      panAngle     = 90;   // Posición actual servo pan
-  int      tiltAngle    = 90;   // Posición actual servo tilt
-  int      cal1Pan      = -1;   // Límite guardado esquina 1
-  int      cal1Tilt     = -1;
-  int      cal2Pan      = -1;   // Límite guardado esquina 2
-  int      cal2Tilt     = -1;
-};
-
-extern BotContext botCtx;
-
-int temp_X1 = 0, temp_Y1 = 100;
-int temp_X2 = 100, temp_Y2 = 0;
+int temp_X1 = 0, temp_Y1 = 90;
+int temp_X2 = 90, temp_Y2 = 0;
 
 // Bandera para sincronizar el arranque
 volatile bool wifiSystemReady = false;
-// "resize_keyboard": true -> Hace que los botones tengan un tamaño normal y no ocupen media pantalla
-// "one_time_keyboard": false -> El teclado se queda ahí siempre, no desaparece al pulsarlo
-const String keyboardJson = "{\"keyboard\":[[\"/start\", \"/stop\"],[\"/status\"]], \"resize_keyboard\":true, \"one_time_keyboard\":true}";
+
+Preferences preferences; // Objeto para acceder a la memoria NVS
+
+int startMonitorTime = 420; // 07:00 por defecto
+int endMonitorTime = 1080;  // 18:00 por defecto
 
 #endif // SYSTEM_DEFINITIONS_H

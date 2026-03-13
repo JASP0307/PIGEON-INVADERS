@@ -20,7 +20,7 @@
 #define HREF_GPIO_NUM  7
 #define PCLK_GPIO_NUM  13
 
-#define MONITORING_INTERVAL_MS (10 * 60 * 1000) // 5 minutos en milisegundos
+#define MONITORING_INTERVAL_MS (2 * 60 * 1000) // 2 minutos en milisegundos
 
 // Este archivo centraliza todas las definiciones lógicas, constantes de comportamiento,
 // y enumeraciones para la Máquina de Estados Finitos (FSM) del robot.
@@ -32,7 +32,8 @@ enum SystemState {
   STATE_INITIALIZING,      // Encendido, conexión WiFi y Telegram
   STATE_IDLE,              // Esperando comando Start (Láser apagado)
   STATE_MONITORING,        // Vigilancia intermitente (Loop de 5 min)
-  STATE_TAKING_PICTURE,    // Tomando foto y procesando evidencia
+  STATE_PICTURE_PRE_ATTACK,  // Toma foto y luego ataca
+  STATE_PICTURE_POST_ATTACK, // Toma foto y vuelve a monitorear
   STATE_ATTACKING,         // Láser ON, moviendo servos, reporte
   STATE_CALIB_SET_LL,      // Calibración: Esperando definir Límite Inferior Izquierdo
   STATE_CALIB_SET_UR,      // Calibración: Esperando definir Límite Superior Derecho
@@ -78,6 +79,10 @@ typedef enum {
     PATTERN_ZIGZAG_VERT
 } PatternType;
 
+// 0 = Área 1, 1 = Área 2, 2 = Área 3, 3 = Área 4
+const int AREAS = 4;
+int AREA_ACTUAL = 0; 
+
 typedef struct {
     PatternType currentType;
     bool active;
@@ -86,7 +91,8 @@ typedef struct {
     float currentX;      // Posición actual X calculada
     float currentY;      // Posición actual Y calculada
     int areaPhase;      // 0 = primera área, 1 = segunda área
-    int targetArea[2];  // Índices de las dos áreas a atacar
+    int targetArea[AREAS];  // Índices de las dos áreas a atacar
+    int totalAreas;     // Cuántas áreas vamos a atacar en este ciclo (1 o 2)
     // Límites locales copiados de la calibración global
     float minX, maxX, minY, maxY; 
 } PatternContext;
@@ -96,18 +102,16 @@ PatternContext patCtx;
 //int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100, stepSize = 2, stepSizefast = 10;
 int stepSize = 2, stepSizefast = 10; 
 
-// 0 = Área 1, 1 = Área 2
-const int AREAS = 2;
-int AREA_ACTUAL = 0; 
 
-// Arreglos para guardar los datos de 2 áreas [Área 1, Área 2]
-int g_calibMinX[AREAS] = {0, 0};
-int g_calibMaxX[AREAS] = {100, 100};
-int g_calibMinY[AREAS] = {0, 0};
-int g_calibMaxY[AREAS] = {100, 100};
 
-int g_homeX[AREAS] = {90, 90};
-int g_homeY[AREAS] = {90, 90};
+// Arreglos para guardar los datos de 4 áreas [Área 1, Área 2, Área 3, Área 4]
+int g_calibMinX[AREAS] = {0, 0, 0, 0};
+int g_calibMaxX[AREAS] = {100, 100, 100, 100};
+int g_calibMinY[AREAS] = {0, 0, 0, 0};
+int g_calibMaxY[AREAS] = {100, 100, 100, 100};
+
+int g_homeX[AREAS] = {90, 90, 90, 90};
+int g_homeY[AREAS] = {90, 90, 90, 90};
 
 int currentPan = 90;  
 int currentTilt = 90;

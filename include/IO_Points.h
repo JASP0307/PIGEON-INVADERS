@@ -9,7 +9,7 @@ namespace Pinout {
     // SUBSISTEMA DE ACTUACIÓN (SERVO MOTORES)
     //----------------------------------------------------------------
     namespace ServoMotors {
-        constexpr uint8_t SERVO_X = 14;
+        constexpr uint8_t SERVO_X = 42;
         constexpr uint8_t SERVO_Y = 21;
     }
 
@@ -18,12 +18,5 @@ namespace Pinout {
     //----------------------------------------------------------------
     namespace Laser {
         constexpr uint8_t Laser_1 = 48;
-    }
-
-    //================================================================
-    // SUBSISTEMA DE ACTUACICIÓN (LEDS)
-    //----------------------------------------------------------------
-    namespace TiraLED {
-        constexpr uint8_t LEDs = 13;
     }
 } // Fin del namespace Pinout

@@ -30,8 +30,8 @@ const char* SSID_CLARO = "CLAROV6RCY";
 const char* PASS_CLARO = "48575443AFC7839E";
 
 // Variables de estado de red (inician con tu red principal)
-String currentSSID = SSID_CLARO;
-String currentPASS = PASS_CLARO;
+String currentSSID = SSID_FAMILIA;
+String currentPASS = PASS_FAMILIA;
 
 // Estructura para pasar el "paquete de evidencia"
 // Credenciales Telegram
@@ -117,7 +117,7 @@ void setup() {
   }
  
   // Crear tareas
-  xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 1, NULL, 0);
+  xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 2, NULL, 0);
   xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          10240, NULL, 3, NULL, 1);
   xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
@@ -407,21 +407,30 @@ void enviarTecladoCalibracion(String chat_id) {
 void enviarMenu(String chat_id) {
   // Construimos el teclado en formato JSON
   String keyboardJson = "[";
-  // Fila 1: Arriba
+  keyboardJson.reserve(1500); // Reserva 1.5KB de memoria de golpe
+
+  // Fila 1
   keyboardJson += "[{\"text\":\"🟢 Start\", \"callback_data\":\"START\"},";
   keyboardJson += "{\"text\":\"🔴 Stop\", \"callback_data\":\"STOP\"}],";
+  // Fila 2
   keyboardJson += "[{\"text\":\"📸 Foto\", \"callback_data\":\"TAKE_PICTURE\"},";
   keyboardJson += "{\"text\":\"🕊️ Simular Paloma \", \"callback_data\":\"PIGEONSIM\"}],";
+  // Fila 3
   keyboardJson += "[{\"text\":\"⚙️ Calibrar Área 1\", \"callback_data\":\"CALIBRATE_1\"},";
   keyboardJson += "{\"text\":\"⚙️ Calibrar Área 2\", \"callback_data\":\"CALIBRATE_2\"}],";
+  // Fila 4
   keyboardJson += "[{\"text\":\"⚙️ Calibrar Área 3\", \"callback_data\":\"CALIBRATE_3\"},";
   keyboardJson += "{\"text\":\"⚙️ Calibrar Área 4\", \"callback_data\":\"CALIBRATE_4\"}],";
+  // Fila 5
   keyboardJson += "[{\"text\":\"👁️ Ver Área 1\", \"callback_data\":\"VIEW_AREA_1\"},";
   keyboardJson += "{\"text\":\"👁️ Ver Área 2\", \"callback_data\":\"VIEW_AREA_2\"}],";
+  // Fila 6
   keyboardJson += "[{\"text\":\"👁️ Ver Área 3\", \"callback_data\":\"VIEW_AREA_3\"},";
   keyboardJson += "{\"text\":\"👁️ Ver Área 4\", \"callback_data\":\"VIEW_AREA_4\"}],";
+  // Fila 7
   keyboardJson += "[{\"text\":\"🌐 CLARO\", \"callback_data\":\"CLARO\"},";
   keyboardJson += "{\"text\":\"🏠 FAMILIA\", \"callback_data\":\"FAMILIA\"}],";
+  // Fila 8
   keyboardJson += "[{\"text\":\"📊 Estado\", \"callback_data\":\"STATUS\"},";
   keyboardJson += "{\"text\":\"❓ Ayuda\", \"callback_data\":\"HELP\"}]";
   keyboardJson += "]";
@@ -697,27 +706,48 @@ void procesarMensajeTelegram(String text, String chat_id) {
 }
 
 void handleNewMessages(int numNewMessages) {
+  Serial.print("🔔 Mensajes a procesar: ");
+  Serial.println(numNewMessages);
+
   for (int i = 0; i < numNewMessages; i++) {
     String chat_id = String(bot.messages[i].chat_id);
     String text = bot.messages[i].text;
-    bool MenuSent = false;
+    String type = bot.messages[i].type;
+    
+    Serial.println("\n--- NUEVO MENSAJE ---");
+    Serial.println("Tipo: " + type);
+    Serial.println("Texto/Data: " + text);
+    Serial.println("Chat ID: " + chat_id);
+
     procesarMensajeTelegram(text, chat_id);
+
     // Seguridad: Ignorar mensajes de extraños
     if (chat_id != CHAT_ID_PERMITIDO) {
+        Serial.println("❌ ACCESO DENEGADO. El ID no coincide.");
         bot.sendMessage(chat_id, "Acceso denegado.", "");
-        continue;
+        continue; // Cortamos el ciclo aquí
     }
 
-    if ((getState() == STATE_CALIB_SET_LL || 
-        getState() == STATE_CALIB_SET_UR) && 
-        bot.messages[i].type == "callback_query") {
+    // 1. Si es un botón presionado (Callback Query)
+    if (type == "callback_query") {
+        Serial.println("✅ Botón de menú detectado.");
+        
+        // Confirmar a Telegram para quitar el reloj de carga del botón
+        bot.answerCallbackQuery(bot.messages[i].query_id);
 
-      procesarMovimientoManual(text, chat_id);
-    }
-
-    if (bot.messages[i].type == "callback_query") {
-      procesarComandos(text, chat_id);
-      bot.answerCallbackQuery(bot.messages[i].query_id);
+        // Enrutamos según el estado de la máquina
+        if (getState() == STATE_CALIB_SET_LL || getState() == STATE_CALIB_SET_UR) {
+            Serial.println("👉 Estado: Calibración. Enviando a movimiento manual.");
+            procesarMovimientoManual(text, chat_id);
+        } else {
+            Serial.println("👉 Estado: Normal. Enviando a procesarComandos.");
+            procesarComandos(text, chat_id);
+        }
+    } 
+    // 2. Si es un mensaje de texto normal tipeado
+    else if (type == "message") {
+        Serial.println("✅ Mensaje de texto detectado.");
+        // Si necesitas procesar comandos por texto, hazlo aquí.
     }
   }
 }
@@ -1312,6 +1342,7 @@ void TaskTelegram(void *pvParameters) {
     }
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
+    Serial.print(".");
     while (numNewMessages) {
       handleNewMessages(numNewMessages);
       numNewMessages = bot.getUpdates(bot.last_message_received + 1);

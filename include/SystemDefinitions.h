@@ -20,7 +20,7 @@
 #define HREF_GPIO_NUM  7
 #define PCLK_GPIO_NUM  13
 
-#define MONITORING_INTERVAL_MS (2 * 60 * 1000) // 2 minutos en milisegundos
+//#define MONITORING_INTERVAL_MS (2 * 60 * 1000) // 2 minutos en milisegundos
 
 // Este archivo centraliza todas las definiciones lógicas, constantes de comportamiento,
 // y enumeraciones para la Máquina de Estados Finitos (FSM) del robot.
@@ -102,7 +102,7 @@ PatternContext patCtx;
 //int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100, stepSize = 2, stepSizefast = 10;
 int stepSize = 2, stepSizefast = 10; 
 
-
+int MONITORING_INTERVAL_MS = (2 * 60 * 1000); // 2 minutos en milisegundos
 
 // Arreglos para guardar los datos de 4 áreas [Área 1, Área 2, Área 3, Área 4]
 int g_calibMinX[AREAS] = {0, 0, 0, 0};

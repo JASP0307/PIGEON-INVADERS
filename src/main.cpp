@@ -30,8 +30,8 @@ const char* SSID_CLARO = "CLAROV6RCY";
 const char* PASS_CLARO = "48575443AFC7839E";
 
 // Variables de estado de red (inician con tu red principal)
-String currentSSID = SSID_FAMILIA;
-String currentPASS = PASS_FAMILIA;
+String currentSSID = SSID_CLARO;
+String currentPASS = PASS_CLARO;
 
 // Estructura para pasar el "paquete de evidencia"
 // Credenciales Telegram
@@ -118,7 +118,7 @@ void setup() {
  
   // Crear tareas
   xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 2, NULL, 0);
-  xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
+  //xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
   xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          10240, NULL, 3, NULL, 1);
   xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
   
@@ -312,9 +312,9 @@ void updatePatternLogic() {
                   }
                   
               } else {
-                  float targetY = (patCtx.stepIndex % 2 == 0) ? patCtx.maxY : patCtx.minY;
-                  SERVO_X.setTarget(nextX);
-                  SERVO_Y.setTarget(targetY);
+                  float targetX = (patCtx.stepIndex % 2 == 0) ? patCtx.maxX : patCtx.minX;
+                  SERVO_X.setTarget(targetX);
+                  SERVO_Y.setTarget(nextY);
                   patCtx.stepIndex++;
               }
               break;
@@ -373,7 +373,7 @@ void monitoringTimerCallback(TimerHandle_t xTimer) {
 }
 // Callback del Timer para lógica de inactividad (chequeo de horas)
 void updateIdleLogicTimerCallback(TimerHandle_t xTimer) {
-    if (!isWithinOperatingHours()) {
+    if (!isWithinOperatingHours() && getState() == STATE_MONITORING) {
         FSMEvent e = EVENT_STOP_COMMAND;
         xQueueSend(fsmQueue, &e, 0); 
     }else if (getState() == STATE_IDLE) {
@@ -406,36 +406,25 @@ void enviarTecladoCalibracion(String chat_id) {
 
 void enviarMenu(String chat_id) {
   // Construimos el teclado en formato JSON
-  String keyboardJson = "[";
-  keyboardJson.reserve(1500); // Reserva 1.5KB de memoria de golpe
+  
+    String keyboardJson = "[";
 
-  // Fila 1
-  keyboardJson += "[{\"text\":\"🟢 Start\", \"callback_data\":\"START\"},";
-  keyboardJson += "{\"text\":\"🔴 Stop\", \"callback_data\":\"STOP\"}],";
-  // Fila 2
-  keyboardJson += "[{\"text\":\"📸 Foto\", \"callback_data\":\"TAKE_PICTURE\"},";
-  keyboardJson += "{\"text\":\"🕊️ Simular Paloma \", \"callback_data\":\"PIGEONSIM\"}],";
-  // Fila 3
-  keyboardJson += "[{\"text\":\"⚙️ Calibrar Área 1\", \"callback_data\":\"CALIBRATE_1\"},";
-  keyboardJson += "{\"text\":\"⚙️ Calibrar Área 2\", \"callback_data\":\"CALIBRATE_2\"}],";
-  // Fila 4
-  keyboardJson += "[{\"text\":\"⚙️ Calibrar Área 3\", \"callback_data\":\"CALIBRATE_3\"},";
-  keyboardJson += "{\"text\":\"⚙️ Calibrar Área 4\", \"callback_data\":\"CALIBRATE_4\"}],";
-  // Fila 5
-  keyboardJson += "[{\"text\":\"👁️ Ver Área 1\", \"callback_data\":\"VIEW_AREA_1\"},";
-  keyboardJson += "{\"text\":\"👁️ Ver Área 2\", \"callback_data\":\"VIEW_AREA_2\"}],";
-  // Fila 6
-  keyboardJson += "[{\"text\":\"👁️ Ver Área 3\", \"callback_data\":\"VIEW_AREA_3\"},";
-  keyboardJson += "{\"text\":\"👁️ Ver Área 4\", \"callback_data\":\"VIEW_AREA_4\"}],";
-  // Fila 7
-  keyboardJson += "[{\"text\":\"🌐 CLARO\", \"callback_data\":\"CLARO\"},";
-  keyboardJson += "{\"text\":\"🏠 FAMILIA\", \"callback_data\":\"FAMILIA\"}],";
-  // Fila 8
-  keyboardJson += "[{\"text\":\"📊 Estado\", \"callback_data\":\"STATUS\"},";
-  keyboardJson += "{\"text\":\"❓ Ayuda\", \"callback_data\":\"HELP\"}]";
-  keyboardJson += "]";
+    keyboardJson += "[\"🟢 START\", \"🔴 STOP\"],";
+    keyboardJson += "[\"📸 FOTO\", \"🕊️ SIMULAR\"],";
+    keyboardJson += "[\"⚙️ CALIB 1\", \"⚙️ CALIB 2\"],";
+    keyboardJson += "[\"⚙️ CALIB 3\", \"⚙️ CALIB 4\"],";
+    keyboardJson += "[\"👁️ VER 1\", \"👁️ VER 2\"],";
+    keyboardJson += "[\"👁️ VER 3\", \"👁️ VER 4\"],";
+    keyboardJson += "[\"🌐 CLARO\", \"🏠 FAMILIA\"],";
+    keyboardJson += "[\"📊 STATUS\", \"❓ HELP\"]";
+    keyboardJson += "]";
 
-  bot.sendMessageWithInlineKeyboard(chat_id, "Menú Principal:", "", keyboardJson);
+  // Parámetros extra: 
+  // resize_keyboard = true (adapta el tamaño a los botones)
+  // one_time_keyboard = false (el teclado se queda fijo en pantalla)
+  // selective = false
+    bot.sendMessageWithReplyKeyboard(chat_id, "Panel de Control Pigeon Invaders:", "", keyboardJson, true, false, false);
+  // bot.sendMessageWithInlineKeyboard(chat_id, "Menú Principal:", "", keyboardJson);
 }
 
 void procesarMovimientoManual(const String &text, const String &chat_id)
@@ -549,122 +538,6 @@ void intentarCambioWiFi(String nuevoSSID, String nuevoPASS) {
     }
 }
 
-void procesarComandos(const String &text, const String &chat_id)
-{
-    ManualPosCmd cmd;
-
-    if (text == "START") {
-        FSMEvent e = EVENT_START_COMMAND;
-        xQueueSend(fsmQueue, &e, 0);
-        bot.sendMessage(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown");
-    }
-    else if (text == "STOP") {
-        FSMEvent e = EVENT_STOP_COMMAND;
-        xQueueSend(fsmQueue, &e, 0);
-        bot.sendMessage(chat_id, "Sistema DETENIDO.", "");
-    }
-    else if (text == "STATUS") {
-        SystemState currentState = getState(); 
-        String stateStr = SystemStateToString(currentState);
-        bot.sendMessage(chat_id, "Estado actual: " + stateStr, "");
-    }
-    else if (text == "PIGEONSIM") {
-        FSMEvent e = EVENT_PIGEON_DETECTED;
-        xQueueSend(fsmQueue, &e, 0);
-        bot.sendMessage(chat_id, "¡Paloma Detectada!", "");
-    }
-    else if (text == "CALIBRATE_1") {
-        AREA_ACTUAL = 0; // Cambiar a Área 1
-        FSMEvent e = EVENT_ENTER_CALIBRATION;
-        xQueueSend(fsmQueue, &e, 0);
-        enviarTecladoCalibracion(chat_id);
-    }
-    else if (text == "CALIBRATE_2") {
-        AREA_ACTUAL = 1; // Cambiar a Área 2
-        FSMEvent e = EVENT_ENTER_CALIBRATION;
-        xQueueSend(fsmQueue, &e, 0);
-        enviarTecladoCalibracion(chat_id);
-    }
-    else if (text == "CALIBRATE_3") {
-        AREA_ACTUAL = 2; // Cambiar a Área 3
-        FSMEvent e = EVENT_ENTER_CALIBRATION;
-        xQueueSend(fsmQueue, &e, 0);
-        enviarTecladoCalibracion(chat_id);
-    }
-    else if (text == "CALIBRATE_4") {
-        AREA_ACTUAL = 3; // Cambiar a Área 4
-        FSMEvent e = EVENT_ENTER_CALIBRATION;
-        xQueueSend(fsmQueue, &e, 0);
-        enviarTecladoCalibracion(chat_id);
-    }
-    else if (text == "VIEW_AREA_1") {
-        AREA_ACTUAL = 0;
-        if (g_calibMinX[0] == 0 && g_calibMaxX[0] == 0) {
-            bot.sendMessage(chat_id, "Área 1 no calibrada aún.", "");
-        } else {
-            FSMEvent e = EVENT_ENTER_PREVIEW; 
-            xQueueSend(fsmQueue, &e, 0);
-            bot.sendMessage(chat_id, "Mostrando Área 1...", "");
-        }
-    }
-    else if (text == "VIEW_AREA_2") {
-        AREA_ACTUAL = 1;
-        if (g_calibMinX[1] == 0 && g_calibMaxX[1] == 0) {
-            bot.sendMessage(chat_id, "Área 2 no calibrada aún.", "");
-        } else {
-            FSMEvent e = EVENT_ENTER_PREVIEW; 
-            xQueueSend(fsmQueue, &e, 0);
-            bot.sendMessage(chat_id, "Mostrando Área 2...", "");
-        }
-    }
-    else if (text == "VIEW_AREA_3") {
-        AREA_ACTUAL = 2;
-        if (g_calibMinX[2] == 0 && g_calibMaxX[2] == 0) {
-            bot.sendMessage(chat_id, "Área 3 no calibrada aún.", "");
-        } else {
-            FSMEvent e = EVENT_ENTER_PREVIEW; 
-            xQueueSend(fsmQueue, &e, 0);
-            bot.sendMessage(chat_id, "Mostrando Área 3...", "");
-        }
-    }
-    else if (text == "VIEW_AREA_4") {
-        AREA_ACTUAL = 3;
-        if (g_calibMinX[3] == 0 && g_calibMaxX[3] == 0) {
-            bot.sendMessage(chat_id, "Área 4 no calibrada aún.", "");
-        } else {
-            FSMEvent e = EVENT_ENTER_PREVIEW; 
-            xQueueSend(fsmQueue, &e, 0);
-            bot.sendMessage(chat_id, "Mostrando Área 4...", "");
-        }
-    }
-    else if (text == "TAKE_PICTURE") {
-        FSMEvent e = EVENT_TAKE_PICTURE; 
-        xQueueSend(fsmQueue, &e, 0);
-        bot.sendMessage(chat_id, "¡Foto tomada y enviada!", "");
-    }
-    else if (text == "CLARO") {
-      bot.sendMessage(chat_id, "🔄 Cambiando a red CLARO...\nSi no me conecto en 15s, regresaré a FamiliaSuárez.", "");
-      intentarCambioWiFi(SSID_CLARO, PASS_CLARO);
-    }
-    else if (text == "FAMILIA") {
-      bot.sendMessage(chat_id, "🔄 Cambiando a red FAMILIA...\nSi no me conecto en 15s, regresaré a Claro.", "");
-      intentarCambioWiFi(SSID_FAMILIA, PASS_FAMILIA);
-    }
-    else if (text == "HELP") {
-        String welcome = "Comandos Pigeon Invaders:\n";
-        welcome += "START : Iniciar monitoreo\n";
-        welcome += "STOP : Detener sistema\n";
-        welcome += "STATUS : Ver estado actual\n";
-        welcome += "PIGEONSIM : Simular detección de paloma\n";
-        welcome += "CALIBRATE : Entrar en modo calibración\n";
-        welcome += "TAKE_PICTURE : Tomar y enviar foto manualmente\n";
-        bot.sendMessage(chat_id, welcome, "");
-    }
-    else {
-        //bot.sendMessage(chat_id, "Comando no reconocido.", "");
-    }
-}
-
 // Función para guardar (llamar cuando Telegram reciba el comando)
 void guardarHorario(int startMins, int endMins) {
   preferences.begin("config", false);
@@ -677,77 +550,210 @@ void guardarHorario(int startMins, int endMins) {
   Serial.printf("Horario actualizado: %d a %d minutos\n", startMins, endMins);
 }
 
-void procesarMensajeTelegram(String text, String chat_id) {
+// Función para guardar (llamar cuando Telegram reciba el comando)
+void guardarIntervalo(int mins) {
+  preferences.begin("config", false);
+  preferences.putInt("intervalMins", mins);
+  preferences.end();
   
-  // Comando esperado: /horario HH:MM HH:MM (Ej: /horario 07:00 18:00)
-  if (text.startsWith("/horario")) {
-    int hInicio, mInicio, hFin, mFin;
+  MONITORING_INTERVAL_MS = mins * 60000; 
+  Serial.printf("Intervalo actualizado: %d minutos\n", mins);
+}
+
+void procesarComandos(const String &text, const String &chat_id) {
     
-    // Convertimos el String a const char* para usar sscanf
-    // sscanf buscará exactamente el patrón de números separados por dos puntos
-    if (sscanf(text.c_str(), "/horario %d:%d %d:%d", &hInicio, &mInicio, &hFin, &mFin) == 4) {
-      
-      // Convertimos a minutos desde la medianoche
-      int startMins = (hInicio * 60) + mInicio;
-      int endMins = (hFin * 60) + mFin;
-      
-      // Llamamos a la función que guarda en Preferences (vista en el paso anterior)
-      guardarHorario(startMins, endMins);
-      
-      String respuesta = "✅ Horario de vigilancia actualizado:\n";
-      respuesta += "Inicio: " + String(hInicio) + ":" + String(mInicio) + "\n";
-      respuesta += "Fin: " + String(hFin) + ":" + String(mFin);
-      
-      bot.sendMessage(chat_id, respuesta, "");
-    } else {
-      bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /horario HH:MM HH:MM (ej. /horario 07:00 18:00)", "");
+    // Usamos indexOf para buscar la palabra clave sin importar los emojis
+    if (text.indexOf("START") >= 0) {
+        FSMEvent e = EVENT_START_COMMAND;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "Sistema ARMADO y en MONITORING.", "Markdown");
     }
-  }
+    else if (text.indexOf("STOP") >= 0) {
+        FSMEvent e = EVENT_STOP_COMMAND;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "Sistema DETENIDO.", "");
+    }
+    else if (text.indexOf("CALIB 1") >= 0) { // Actualiza según el texto del botón
+        AREA_ACTUAL = 0;
+        FSMEvent e = EVENT_ENTER_CALIBRATION;
+        xQueueSend(fsmQueue, &e, 0);
+        enviarTecladoCalibracion(chat_id);
+    }
+    else if (text.indexOf("CALIB 2") >= 0) {
+        AREA_ACTUAL = 1; 
+        FSMEvent e = EVENT_ENTER_CALIBRATION;
+        xQueueSend(fsmQueue, &e, 0);
+        enviarTecladoCalibracion(chat_id);
+    }
+    else if (text.indexOf("CALIB 3") >= 0) {
+        AREA_ACTUAL = 2; 
+        FSMEvent e = EVENT_ENTER_CALIBRATION;
+        xQueueSend(fsmQueue, &e, 0);
+        enviarTecladoCalibracion(chat_id);
+    }
+    else if (text.indexOf("CALIB 4") >= 0) {
+        AREA_ACTUAL = 3; 
+        FSMEvent e = EVENT_ENTER_CALIBRATION;
+        xQueueSend(fsmQueue, &e, 0);
+        enviarTecladoCalibracion(chat_id);
+    }
+    else if (text.indexOf("FOTO") >= 0) {
+        FSMEvent e = EVENT_TAKE_PICTURE;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "Capturando foto...", "");
+    }
+    else if (text.indexOf("SIMULAR") >= 0) {
+        FSMEvent e = EVENT_PIGEON_DETECTED;
+        xQueueSend(fsmQueue, &e, 0);
+        bot.sendMessage(chat_id, "Simulando paloma en el área de vigilancia...", "");
+    }
+    else if (text.indexOf("CLARO") >= 0) {
+        intentarCambioWiFi(SSID_CLARO, PASS_CLARO);
+        bot.sendMessage(chat_id, "Intentando conectar a la red CLARO...", "");
+    }
+    else if (text.indexOf("FAMILIA") >= 0) {
+        intentarCambioWiFi(SSID_FAMILIA, PASS_FAMILIA);
+        bot.sendMessage(chat_id, "Intentando conectar a la red FAMILIA...", "");
+    }
+    else if (text.indexOf("STATUS") >= 0) {
+        SystemState state = getState();
+        String estadoStr = SystemStateToString(state);
+        int startMonitorTimeHH = startMonitorTime / 60;
+        int startMonitorTimeMM = startMonitorTime % 60;
+        int endMonitorTimeHH = endMonitorTime / 60;
+        int endMonitorTimeMM = endMonitorTime % 60;
+        bot.sendMessage(chat_id, "📊 Estado actual del sistema: " + estadoStr + " | Horario: " + String(startMonitorTimeHH) + ":" + String(startMonitorTimeMM) + " - " + String(endMonitorTimeHH) + ":" + String(endMonitorTimeMM) + " | Intervalo: " + String(MONITORING_INTERVAL_MS / 60000) + " minutos", "");
+    }
+    else if (text.indexOf("HELP") >= 0) {
+        String ayuda = "❓ *Ayuda - Comandos Disponibles:*\n\n";
+        ayuda += "🟢 *START* - Arma el sistema y comienza vigilancia.\n";
+        ayuda += "🔴 *STOP* - Detiene toda actividad y vuelve a Idle.\n";
+        ayuda += "📸 *FOTO* - Toma una foto instantánea del área vigilada.\n";
+        ayuda += "🕊️ *SIMULAR* - Simula la detección de una paloma para pruebas.\n";
+        ayuda += "⚙️ *CALIB 1-4* - Entra al modo calibración para el área 1 a 4.\n";
+        ayuda += "👁️ *VER 1-4* - Muestra un video en vivo del área 1 a 4 (si implementado).\n";
+        ayuda += "🌐 *CLARO* - Cambia la conexión Wi-Fi a la red CLARO.\n";
+        ayuda += "🏠 *FAMILIA* - Cambia la conexión Wi-Fi a la red FAMILIA.\n";
+        ayuda += "📊 *STATUS* - Muestra el estado actual del sistema.\n\n";
+        ayuda += "Para comandos de calibración, usa los botones de flecha para mover el láser y el botón 💾 para guardar los límites.";
+        
+        bot.sendMessage(chat_id, ayuda, "Markdown");
+    }
+    else if (text.indexOf("VER 1") >= 0) {
+        AREA_ACTUAL = 0;
+        if (g_calibMinX[0] == 0 && g_calibMaxX[0] == 0) {
+            bot.sendMessage(chat_id, "Área 1 no calibrada aún.", "");
+        } else {
+            FSMEvent e = EVENT_ENTER_PREVIEW; 
+            xQueueSend(fsmQueue, &e, 0);
+            bot.sendMessage(chat_id, "Mostrando Área 1...", "");
+        }
+    }
+    else if (text.indexOf("VER 2") >= 0) {
+        AREA_ACTUAL = 1;
+        if (g_calibMinX[1] == 0 && g_calibMaxX[1] == 0) {
+            bot.sendMessage(chat_id, "Área 2 no calibrada aún.", "");
+        } else {
+            FSMEvent e = EVENT_ENTER_PREVIEW; 
+            xQueueSend(fsmQueue, &e, 0);
+            bot.sendMessage(chat_id, "Mostrando Área 2...", "");
+        }
+    }
+    else if (text.indexOf("VER 3") >= 0) {  
+        AREA_ACTUAL = 2;
+        if (g_calibMinX[2] == 0 && g_calibMaxX[2] == 0) {
+            bot.sendMessage(chat_id, "Área 3 no calibrada aún.", "");
+        } else {
+            FSMEvent e = EVENT_ENTER_PREVIEW; 
+            xQueueSend(fsmQueue, &e, 0);
+            bot.sendMessage(chat_id, "Mostrando Área 3...", "");
+        }
+    }
+    else if (text.indexOf("VER 4") >= 0) {
+        AREA_ACTUAL = 3;
+        if (g_calibMinX[3] == 0 && g_calibMaxX[3] == 0) {
+            bot.sendMessage(chat_id, "Área 4 no calibrada aún.", "");
+        } else {
+            FSMEvent e = EVENT_ENTER_PREVIEW; 
+            xQueueSend(fsmQueue, &e, 0);
+            bot.sendMessage(chat_id, "Mostrando Área 4...", "");
+        }
+    }else if (text.startsWith("/horario")) {
+        int hInicio, mInicio, hFin, mFin;
+        
+        // Convertimos el String a const char* para usar sscanf
+        // sscanf buscará exactamente el patrón de números separados por dos puntos
+        if (sscanf(text.c_str(), "/horario %d:%d %d:%d", &hInicio, &mInicio, &hFin, &mFin) == 4) {
+        
+        // Convertimos a minutos desde la medianoche
+        int startMins = (hInicio * 60) + mInicio;
+        int endMins = (hFin * 60) + mFin;
+        
+        // Llamamos a la función que guarda en Preferences (vista en el paso anterior)
+        guardarHorario(startMins, endMins);
+        
+        String respuesta = "✅ Horario de vigilancia actualizado:\n";
+        respuesta += "Inicio: " + String(hInicio) + ":" + String(mInicio) + "\n";
+        respuesta += "Fin: " + String(hFin) + ":" + String(mFin);
+        
+        bot.sendMessage(chat_id, respuesta, "");
+        } else {
+        bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /horario HH:MM HH:MM (ej. /horario 07:00 18:00)", "");
+        }
+    }else if (text.startsWith("/mins")) {
+        int intervalmins = 2;
+        
+        // Convertimos el String a const char* para usar sscanf
+        // sscanf buscará exactamente el patrón de números separados por dos puntos
+        if (sscanf(text.c_str(), "/mins %d", &intervalmins) == 1) {
+        guardarIntervalo(intervalmins);
+        bot.sendMessage(chat_id, "✅ Intervalo de vigilancia actualizado.", "");
+        } else {
+        bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /mins <minutos> (ej. /mins 5)", "");
+        }
+    }
+     else {
+        // Si no es un comando específico, lo tratamos como posible movimiento manual
+        procesarMovimientoManual(text, chat_id);
+    }
 }
 
 void handleNewMessages(int numNewMessages) {
-  Serial.print("🔔 Mensajes a procesar: ");
-  Serial.println(numNewMessages);
-
   for (int i = 0; i < numNewMessages; i++) {
     String chat_id = String(bot.messages[i].chat_id);
     String text = bot.messages[i].text;
     String type = bot.messages[i].type;
-    
-    Serial.println("\n--- NUEVO MENSAJE ---");
-    Serial.println("Tipo: " + type);
-    Serial.println("Texto/Data: " + text);
-    Serial.println("Chat ID: " + chat_id);
-
-    procesarMensajeTelegram(text, chat_id);
 
     // Seguridad: Ignorar mensajes de extraños
     if (chat_id != CHAT_ID_PERMITIDO) {
-        Serial.println("❌ ACCESO DENEGADO. El ID no coincide.");
         bot.sendMessage(chat_id, "Acceso denegado.", "");
-        continue; // Cortamos el ciclo aquí
+        continue;
     }
 
-    // 1. Si es un botón presionado (Callback Query)
+    // 1. MANEJAR BOTONES INLINE (Mando de Calibración)
     if (type == "callback_query") {
-        Serial.println("✅ Botón de menú detectado.");
         
-        // Confirmar a Telegram para quitar el reloj de carga del botón
+        // Confirmar a Telegram que recibimos el clic (quita el icono de carga del botón)
         bot.answerCallbackQuery(bot.messages[i].query_id);
 
-        // Enrutamos según el estado de la máquina
+        // Si estamos en estado de calibración, enviamos el comando a la función manual
         if (getState() == STATE_CALIB_SET_LL || getState() == STATE_CALIB_SET_UR) {
-            Serial.println("👉 Estado: Calibración. Enviando a movimiento manual.");
             procesarMovimientoManual(text, chat_id);
         } else {
-            Serial.println("👉 Estado: Normal. Enviando a procesarComandos.");
-            procesarComandos(text, chat_id);
+            // (Opcional) Mensaje si presionan un botón de calibración viejo fuera de tiempo
+            bot.sendMessage(chat_id, "El modo calibración no está activo.", "");
         }
     } 
-    // 2. Si es un mensaje de texto normal tipeado
+    
+    // 2. MANEJAR TEXTO NORMAL Y REPLY KEYBOARD (Menú Principal)
     else if (type == "message") {
-        Serial.println("✅ Mensaje de texto detectado.");
-        // Si necesitas procesar comandos por texto, hazlo aquí.
+      
+        if (text == "/start" || text == "/menu") {
+            enviarMenu(chat_id);
+        } else {
+            // Le pasamos los comandos (ej. "🟢 START", "⚙️ CALIB 1") a tu procesador
+            procesarComandos(text, chat_id);
+        }
     }
   }
 }
@@ -940,7 +946,7 @@ void capturarYEnviarFoto(String mensajeTelegram) {
 void onEnterInit() {
   Serial.println("Entrando en STATE_INITIALIZING");
   servos_init();
-
+  cargarHorario();
   cargarCalibraciones();
 
   if (!initCamera()) {
@@ -1342,7 +1348,6 @@ void TaskTelegram(void *pvParameters) {
     }
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
-    Serial.print(".");
     while (numNewMessages) {
       handleNewMessages(numNewMessages);
       numNewMessages = bot.getUpdates(bot.last_message_received + 1);

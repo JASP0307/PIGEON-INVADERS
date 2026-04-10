@@ -560,6 +560,16 @@ void guardarIntervalo(int mins) {
   Serial.printf("Intervalo actualizado: %d minutos\n", mins);
 }
 
+// Función para guardar (llamar cuando Telegram reciba el comando)
+void guardarSpeed(int ms) {
+  preferences.begin("config", false);
+  preferences.putInt("Speed", ms);
+  preferences.end();
+  
+  SPEED_MS = ms; 
+  Serial.printf("Velocidad actualizada: %d segundos\n", ms);
+}
+
 void procesarComandos(const String &text, const String &chat_id) {
     
     // Usamos indexOf para buscar la palabra clave sin importar los emojis
@@ -622,7 +632,7 @@ void procesarComandos(const String &text, const String &chat_id) {
         int startMonitorTimeMM = startMonitorTime % 60;
         int endMonitorTimeHH = endMonitorTime / 60;
         int endMonitorTimeMM = endMonitorTime % 60;
-        bot.sendMessage(chat_id, "📊 Estado actual del sistema: " + estadoStr + " | Horario: " + String(startMonitorTimeHH) + ":" + String(startMonitorTimeMM) + " - " + String(endMonitorTimeHH) + ":" + String(endMonitorTimeMM) + " | Intervalo: " + String(MONITORING_INTERVAL_MS / 60000) + " minutos", "");
+        bot.sendMessage(chat_id, "📊 Estado actual del sistema: " + estadoStr + " | Horario: " + String(startMonitorTimeHH) + ":" + String(startMonitorTimeMM) + " - " + String(endMonitorTimeHH) + ":" + String(endMonitorTimeMM) + " | Intervalo: " + String(MONITORING_INTERVAL_MS / 60000) + " minutos" + " | Velocidad: " + String(SPEED_MS) + " milisegundos", "");
     }
     else if (text.indexOf("HELP") >= 0) {
         String ayuda = "❓ *Ayuda - Comandos Disponibles:*\n\n";
@@ -710,6 +720,17 @@ void procesarComandos(const String &text, const String &chat_id) {
         bot.sendMessage(chat_id, "✅ Intervalo de vigilancia actualizado.", "");
         } else {
         bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /mins <minutos> (ej. /mins 5)", "");
+        }
+    }else if (text.startsWith("/speed")) {
+        int velocidad_MS = 50;
+        
+        // Convertimos el String a const char* para usar sscanf
+        // sscanf buscará exactamente el patrón de números separados por dos puntos
+        if (sscanf(text.c_str(), "/speed %d", &velocidad_MS) == 1) {
+        guardarSpeed(velocidad_MS);
+        bot.sendMessage(chat_id, "✅ Velocidad de movimiento actualizada.", "");
+        } else {
+        bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /speed <segundos> (ej. /speed 5)", "");
         }
     }
      else {
@@ -1242,7 +1263,7 @@ void TaskServoControl(void *pvParameters) {
     SERVO_X.update();
     SERVO_Y.update();
     
-    vTaskDelay(pdMS_TO_TICKS(50)); 
+    vTaskDelay(pdMS_TO_TICKS(SPEED_MS)); 
   }
 }
 

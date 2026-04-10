@@ -146,5 +146,5 @@ Preferences preferences; // Objeto para acceder a la memoria NVS
 
 int startMonitorTime = 420; // 07:00 por defecto
 int endMonitorTime = 1080;  // 18:00 por defecto
-
+int SPEED_MS = 50; // Velocidad de movimiento en milisegundos (default)
 #endif // SYSTEM_DEFINITIONS_H

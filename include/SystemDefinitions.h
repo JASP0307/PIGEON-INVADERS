@@ -136,6 +136,15 @@ enum class BotState {
   CONFIRMING_CAL  // Mostrando resumen para confirmar
 };
 
+// Define esto en la parte superior de tu código, junto a tus variables globales
+struct RangoHorario {
+  int startMins = 0;
+  int endMins = 0;
+};
+
+const int NUM_HORARIOS = 3;
+RangoHorario horariosMonitor[NUM_HORARIOS];
+
 int temp_X1 = 0, temp_Y1 = 90;
 int temp_X2 = 90, temp_Y2 = 0;
 

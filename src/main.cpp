@@ -84,69 +84,72 @@ void enviarTecladoCalibracion(String chat_id);
 void enviarMenu(String chat_id);
 void procesarMovimientoManual(const String &text, const String &chat_id);
 void procesarComandos(const String &text, const String &chat_id);
-void guardarhorario(int startTime, int endTime);
+void guardarHorario(int index, int startMins, int endMins);
 void procesarMensajeTelegram(String text, String chat_id);
 void stopPattern(int x_home, int y_home);
+void cargarHorarios();
+void cargarCalibraciones();
+
 
 SystemState getState();
 void setState(SystemState newState);
 
 void setup() {
-  Serial.begin(115200);
-  Serial.println("Iniciando sistema...");
-  
-  // Crear mutex para proteger estado
-  stateMutex = xSemaphoreCreateMutex();
-  if (stateMutex == NULL) {
+    Serial.begin(115200);
+    Serial.println("Iniciando sistema...");
+
+    // Crear mutex para proteger estado
+    stateMutex = xSemaphoreCreateMutex();
+    if (stateMutex == NULL) {
     Serial.println("Error: No se pudo crear mutex de estado.");
     while (1);
-  }
+    }
 
-  // Crear cola FSM
-  fsmQueue = xQueueCreate(10, sizeof(FSMEvent));
-  if (fsmQueue == NULL) {
+    // Crear cola FSM
+    fsmQueue = xQueueCreate(10, sizeof(FSMEvent));
+    if (fsmQueue == NULL) {
     Serial.println("Error: No se pudo crear la cola FSM.");
     while (1);
-  }
+    }
 
-  // Crear cola FSM
-  manualControlQueue = xQueueCreate(5, sizeof(ManualPosCmd));
-  if (manualControlQueue == NULL) {
+    // Crear cola FSM
+    manualControlQueue = xQueueCreate(5, sizeof(ManualPosCmd));
+    if (manualControlQueue == NULL) {
     Serial.println("Error: No se pudo crear la cola manualControlQueue.");
     while (1);
-  }
- 
-  // Crear tareas
-  xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 2, NULL, 0);
-  //xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
-  xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          10240, NULL, 3, NULL, 1);
-  xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
-  
-  Serial.println("Tareas FreeRTOS creadas");
+    }
+
+    // Crear tareas
+    xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 2, NULL, 0);
+    //xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
+    xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          10240, NULL, 3, NULL, 1);
+    xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
+
+    Serial.println("Tareas FreeRTOS creadas");
 }
 
 void loop() {}
 
 // Funciones thread-safe para estado
 SystemState getState() {
-  SystemState state;
-  if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
+    SystemState state;
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
     state = currentState;
     xSemaphoreGive(stateMutex);
-  }
-  return state;
+    }
+    return state;
 }
 
 void setState(SystemState newState) {
-  if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
+    if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
     currentState = newState;
     xSemaphoreGive(stateMutex);
-  }
+    }
 }
 
 String SystemStateToString(SystemState state) {
-  switch(state) {
-    
+    switch(state) {
+
     case STATE_INITIALIZING: return "STATE_INITIALIZING";
     case STATE_IDLE: return "STATE_IDLE";
     case STATE_MONITORING: return "STATE_MONITORING";
@@ -155,7 +158,7 @@ String SystemStateToString(SystemState state) {
     case STATE_CALIB_SET_UR: return "STATE_CALIB_SET_UR";
     case STATE_CALIB_PREVIEW: return "STATE_CALIB_PREVIEW";
     default: return "UNKNOWN";
-  }
+    }
 }
 
 void servos_init() {
@@ -385,23 +388,23 @@ void updateIdleLogicTimerCallback(TimerHandle_t xTimer) {
 }
 
 void enviarTecladoCalibracion(String chat_id) {
-  // Construimos el teclado en formato JSON
-  String keyboardJson = "[";
-  // Fila 1: Arriba
-  keyboardJson += "[{\"text\":\"⏫\", \"callback_data\":\"TILT_UP_FAST\"}],";
-  keyboardJson += "[{\"text\":\"🔼\", \"callback_data\":\"TILT_UP\"}],";
-  // Fila 2: Izquierda, Guardar, Derecha
-  keyboardJson += "[{\"text\":\"⏪\", \"callback_data\":\"PAN_LEFT_FAST\"},";
-  keyboardJson += "{\"text\":\"◀️\", \"callback_data\":\"PAN_LEFT\"},";
-  keyboardJson += "{\"text\":\"💾\", \"callback_data\":\"SAVE_LIMIT\"},";
-  keyboardJson += "{\"text\":\"▶️\", \"callback_data\":\"PAN_RIGHT\"},";
-  keyboardJson += "{\"text\":\"⏩\", \"callback_data\":\"PAN_RIGHT_FAST\"}],";
-  // Fila 3: Abajo
-  keyboardJson += "[{\"text\":\"🔽\", \"callback_data\":\"TILT_DOWN\"}],";
-  keyboardJson += "[{\"text\":\"⏬\", \"callback_data\":\"TILT_DOWN_FAST\"}]";
-  keyboardJson += "]";
+    // Construimos el teclado en formato JSON
+    String keyboardJson = "[";
+    // Fila 1: Arriba
+    keyboardJson += "[{\"text\":\"⏫\", \"callback_data\":\"TILT_UP_FAST\"}],";
+    keyboardJson += "[{\"text\":\"🔼\", \"callback_data\":\"TILT_UP\"}],";
+    // Fila 2: Izquierda, Guardar, Derecha
+    keyboardJson += "[{\"text\":\"⏪\", \"callback_data\":\"PAN_LEFT_FAST\"},";
+    keyboardJson += "{\"text\":\"◀️\", \"callback_data\":\"PAN_LEFT\"},";
+    keyboardJson += "{\"text\":\"💾\", \"callback_data\":\"SAVE_LIMIT\"},";
+    keyboardJson += "{\"text\":\"▶️\", \"callback_data\":\"PAN_RIGHT\"},";
+    keyboardJson += "{\"text\":\"⏩\", \"callback_data\":\"PAN_RIGHT_FAST\"}],";
+    // Fila 3: Abajo
+    keyboardJson += "[{\"text\":\"🔽\", \"callback_data\":\"TILT_DOWN\"}],";
+    keyboardJson += "[{\"text\":\"⏬\", \"callback_data\":\"TILT_DOWN_FAST\"}]";
+    keyboardJson += "]";
 
-  bot.sendMessageWithInlineKeyboard(chat_id, "Modo Calibración Activado. Usa las flechas para mover el láser:", "", keyboardJson);
+    bot.sendMessageWithInlineKeyboard(chat_id, "Modo Calibración Activado. Usa las flechas para mover el láser:", "", keyboardJson);
 }
 
 void enviarMenu(String chat_id) {
@@ -539,35 +542,44 @@ void intentarCambioWiFi(String nuevoSSID, String nuevoPASS) {
 }
 
 // Función para guardar (llamar cuando Telegram reciba el comando)
-void guardarHorario(int startMins, int endMins) {
-  preferences.begin("config", false);
-  preferences.putInt("startMins", startMins);
-  preferences.putInt("endMins", endMins);
-  preferences.end();
-  
-  startMonitorTime = startMins;
-  endMonitorTime = endMins;
-  Serial.printf("Horario actualizado: %d a %d minutos\n", startMins, endMins);
+void guardarHorario(int index, int startMins, int endMins) {
+    preferences.begin("config", false);
+
+    // Generamos claves dinámicas según el índice
+    char keyStart[5];
+    char keyEnd[5];
+    sprintf(keyStart, "st%d", index);
+    sprintf(keyEnd, "en%d", index);
+
+    preferences.putInt(keyStart, startMins);
+    preferences.putInt(keyEnd, endMins);
+    preferences.end();
+
+    // Actualizamos el arreglo en memoria RAM
+    horariosMonitor[index].startMins = startMins;
+    horariosMonitor[index].endMins = endMins;
+
+    Serial.printf("Horario %d actualizado: %d a %d minutos\n", index + 1, startMins, endMins);
 }
 
 // Función para guardar (llamar cuando Telegram reciba el comando)
 void guardarIntervalo(int mins) {
-  preferences.begin("config", false);
-  preferences.putInt("intervalMins", mins);
-  preferences.end();
-  
-  MONITORING_INTERVAL_MS = mins * 60000; 
-  Serial.printf("Intervalo actualizado: %d minutos\n", mins);
+    preferences.begin("config", false);
+    preferences.putInt("intervalMins", mins);
+    preferences.end();
+
+    MONITORING_INTERVAL_MS = mins * 60000; 
+    Serial.printf("Intervalo actualizado: %d minutos\n", mins);
 }
 
 // Función para guardar (llamar cuando Telegram reciba el comando)
 void guardarSpeed(int ms) {
-  preferences.begin("config", false);
-  preferences.putInt("Speed", ms);
-  preferences.end();
-  
-  SPEED_MS = ms; 
-  Serial.printf("Velocidad actualizada: %d segundos\n", ms);
+    preferences.begin("config", false);
+    preferences.putInt("Speed", ms);
+    preferences.end();
+
+    SPEED_MS = ms; 
+    Serial.printf("Velocidad actualizada: %d segundos\n", ms);
 }
 
 void procesarComandos(const String &text, const String &chat_id) {
@@ -628,11 +640,41 @@ void procesarComandos(const String &text, const String &chat_id) {
     else if (text.indexOf("STATUS") >= 0) {
         SystemState state = getState();
         String estadoStr = SystemStateToString(state);
-        int startMonitorTimeHH = startMonitorTime / 60;
-        int startMonitorTimeMM = startMonitorTime % 60;
-        int endMonitorTimeHH = endMonitorTime / 60;
-        int endMonitorTimeMM = endMonitorTime % 60;
-        bot.sendMessage(chat_id, "📊 Estado actual del sistema: " + estadoStr + " | Horario: " + String(startMonitorTimeHH) + ":" + String(startMonitorTimeMM) + " - " + String(endMonitorTimeHH) + ":" + String(endMonitorTimeMM) + " | Intervalo: " + String(MONITORING_INTERVAL_MS / 60000) + " minutos" + " | Velocidad: " + String(SPEED_MS) + " milisegundos", "");
+        
+        // 1. Iniciamos el mensaje con el estado general
+        String respuesta = "📊 Estado actual del sistema: " + estadoStr + "\n\n";
+        respuesta += "🕒 Horarios de Monitoreo:\n";
+        
+        // 2. Recorremos los 3 horarios para agregarlos al mensaje
+        for (int i = 0; i < NUM_HORARIOS; i++) {
+            int start = horariosMonitor[i].startMins;
+            int end = horariosMonitor[i].endMins;
+            
+            respuesta += "  [" + String(i + 1) + "] "; // Muestra [1], [2] o [3]
+            
+            // Verificamos si el horario está desactivado
+            if (start == 0 && end == 0) {
+                respuesta += "Desactivado\n";
+            } else {
+                int startHH = start / 60;
+                int startMM = start % 60;
+                int endHH = end / 60;
+                int endMM = end % 60;
+                
+                // Usamos sprintf para forzar 2 dígitos (ej. 08:05 en vez de 8:5)
+                char buffer[20];
+                sprintf(buffer, "%02d:%02d - %02d:%02d\n", startHH, startMM, endHH, endMM);
+                respuesta += String(buffer);
+            }
+        }
+        
+        // 3. Agregamos el resto de los parámetros de configuración
+        respuesta += "\n⚙️ Configuración Extra:\n";
+        respuesta += "  • Intervalo: " + String(MONITORING_INTERVAL_MS / 60000) + " minutos\n";
+        respuesta += "  • Velocidad: " + String(SPEED_MS) + " milisegundos";
+        
+        // 4. Enviamos el mensaje estructurado
+        bot.sendMessage(chat_id, respuesta, "");
     }
     else if (text.indexOf("HELP") >= 0) {
         String ayuda = "❓ *Ayuda - Comandos Disponibles:*\n\n";
@@ -689,26 +731,32 @@ void procesarComandos(const String &text, const String &chat_id) {
             bot.sendMessage(chat_id, "Mostrando Área 4...", "");
         }
     }else if (text.startsWith("/horario")) {
-        int hInicio, mInicio, hFin, mFin;
-        
-        // Convertimos el String a const char* para usar sscanf
-        // sscanf buscará exactamente el patrón de números separados por dos puntos
-        if (sscanf(text.c_str(), "/horario %d:%d %d:%d", &hInicio, &mInicio, &hFin, &mFin) == 4) {
-        
-        // Convertimos a minutos desde la medianoche
-        int startMins = (hInicio * 60) + mInicio;
-        int endMins = (hFin * 60) + mFin;
-        
-        // Llamamos a la función que guarda en Preferences (vista en el paso anterior)
-        guardarHorario(startMins, endMins);
-        
-        String respuesta = "✅ Horario de vigilancia actualizado:\n";
-        respuesta += "Inicio: " + String(hInicio) + ":" + String(mInicio) + "\n";
-        respuesta += "Fin: " + String(hFin) + ":" + String(mFin);
-        
-        bot.sendMessage(chat_id, respuesta, "");
+        int id, hInicio, mInicio, hFin, mFin;
+
+        // sscanf ahora busca 5 variables: el ID (1,2 o 3) y las horas/minutos
+        if (sscanf(text.c_str(), "/horario %d %d:%d %d:%d", &id, &hInicio, &mInicio, &hFin, &mFin) == 5) {
+            
+            // Validamos que el ID sea correcto
+            if (id < 1 || id > NUM_HORARIOS) {
+                bot.sendMessage(chat_id, "⚠️ El ID del horario debe ser 1, 2 o 3.", "");
+                return; 
+            }
+
+            int index = id - 1; // Ajustamos a índice de arreglo (0, 1 o 2)
+            int startMins = (hInicio * 60) + mInicio;
+            int endMins = (hFin * 60) + mFin;
+            
+            // Llamamos a la función modular
+            guardarHorario(index, startMins, endMins);
+            
+            String respuesta = "✅ Horario " + String(id) + " de vigilancia actualizado:\n";
+            respuesta += "Inicio: " + String(hInicio) + ":" + (mInicio < 10 ? "0" : "") + String(mInicio) + "\n";
+            respuesta += "Fin: " + String(hFin) + ":" + (mFin < 10 ? "0" : "") + String(mFin);
+            
+            bot.sendMessage(chat_id, respuesta, "");
+            
         } else {
-        bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /horario HH:MM HH:MM (ej. /horario 07:00 18:00)", "");
+            bot.sendMessage(chat_id, "⚠️ Formato incorrecto. Usa: /horario ID HH:MM HH:MM (ej. /horario 1 07:00 18:00)", "");
         }
     }else if (text.startsWith("/mins")) {
         int intervalmins = 2;
@@ -862,22 +910,22 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
 }
 
 void guardarCalibracion(int areaIndex) {
-  // Crea el nombre del espacio de memoria dinámicamente (calib0 o calib1)
-  char namespaceName[10];
-  sprintf(namespaceName, "calib%d", areaIndex);
+    // Crea el nombre del espacio de memoria dinámicamente (calib0 o calib1)
+    char namespaceName[10];
+    sprintf(namespaceName, "calib%d", areaIndex);
 
-  // Abre el espacio correspondiente al área
-  preferences.begin(namespaceName, false); 
-  
-  preferences.putInt("minX", g_calibMinX[areaIndex]);
-  preferences.putInt("maxX", g_calibMaxX[areaIndex]);
-  preferences.putInt("minY", g_calibMinY[areaIndex]);
-  preferences.putInt("maxY", g_calibMaxY[areaIndex]);
-  preferences.putInt("homeX", g_homeX[areaIndex]);
-  preferences.putInt("homeY", g_homeY[areaIndex]);
-  
-  preferences.end();
-  Serial.printf("Área %d guardada exitosamente en memoria no volátil.\n", areaIndex + 1);
+    // Abre el espacio correspondiente al área
+    preferences.begin(namespaceName, false); 
+
+    preferences.putInt("minX", g_calibMinX[areaIndex]);
+    preferences.putInt("maxX", g_calibMaxX[areaIndex]);
+    preferences.putInt("minY", g_calibMinY[areaIndex]);
+    preferences.putInt("maxY", g_calibMaxY[areaIndex]);
+    preferences.putInt("homeX", g_homeX[areaIndex]);
+    preferences.putInt("homeY", g_homeY[areaIndex]);
+
+    preferences.end();
+    Serial.printf("Área %d guardada exitosamente en memoria no volátil.\n", areaIndex + 1);
 }
 
 void cargarCalibraciones() {
@@ -902,38 +950,86 @@ void cargarCalibraciones() {
   }
 }
 
-// Función para cargar (llamar en el setup)
-void cargarHorario() {
+void cargarVelocidades() {
   preferences.begin("config", true);
-  startMonitorTime = preferences.getInt("startMins", 420);
-  endMonitorTime = preferences.getInt("endMins", 1080);
+  MONITORING_INTERVAL_MS = preferences.getInt("intervalMins", 5) * 60000; 
+  SPEED_MS = preferences.getInt("Speed", 50); 
+  preferences.end();
+  
+  Serial.printf("Velocidades cargadas: Intervalo %d minutos, Velocidad %d ms\n", MONITORING_INTERVAL_MS / 60000, SPEED_MS);
+}
+
+// Función para cargar (llamar en el setup)
+void cargarHorarios() {
+  preferences.begin("config", true); // true significa modo "solo lectura"
+
+  for (int i = 0; i < NUM_HORARIOS; i++) {
+    // Generamos las mismas claves dinámicas que usamos al guardar
+    char keyStart[5];
+    char keyEnd[5];
+    sprintf(keyStart, "st%d", i);
+    sprintf(keyEnd, "en%d", i);
+
+    // Definimos los valores por defecto: 
+    // El Horario 1 (índice 0) será de 07:00 a 18:00 por defecto.
+    // Los Horarios 2 y 3 (índices 1 y 2) estarán en 0 por defecto (desactivados).
+    int defaultStart = (i == 0) ? 420 : 0;
+    int defaultEnd = (i == 0) ? 1080 : 0;
+
+    // Leemos de la memoria flash y guardamos directo en el arreglo global
+    horariosMonitor[i].startMins = preferences.getInt(keyStart, defaultStart);
+    horariosMonitor[i].endMins = preferences.getInt(keyEnd, defaultEnd);
+    
+    // Imprimimos por el monitor serial para confirmar qué se cargó al arrancar
+    Serial.printf("Boot - Horario %d cargado: %d a %d minutos\n", i + 1, horariosMonitor[i].startMins, horariosMonitor[i].endMins);
+  }
+
   preferences.end();
 }
 
 bool isWithinOperatingHours() {
   struct tm timeinfo;
   
-  // Si por alguna razón el ESP32 pierde la hora, decidimos si bloqueamos o permitimos.
   // Por seguridad (para no disparar láseres a las 3 AM), si falla, retornamos false.
   if (!getLocalTime(&timeinfo)) {
     Serial.println("Error: No se pudo obtener la hora para validar el horario.");
     return false; 
   }
 
-  // Extraemos hora y minuto directamente del struct tm
   int currentHour = timeinfo.tm_hour;
   int currentMinute = timeinfo.tm_min;
-  
   int currentMins = (currentHour * 60) + currentMinute;
-  Serial.printf("Hora actual: %02d:%02d (%d minutos desde medianoche)\n", currentHour, currentMinute, currentMins);
+  
+  // Opcional: Puedes comentar este Serial.printf si satura mucho el monitor serial
+  // Serial.printf("Hora actual: %02d:%02d (%d minutos desde medianoche)\n", currentHour, currentMinute, currentMins);
 
-  // startMonitorTime y endMonitorTime son tus variables globales (ej. 420 y 1080)
-  if (startMonitorTime <= endMonitorTime) {
-    return (currentMins >= startMonitorTime && currentMins <= endMonitorTime);
-  } else {
-    // Para horarios nocturnos que cruzan la medianoche
-    return (currentMins >= startMonitorTime || currentMins <= endMonitorTime);
+  // Iteramos sobre los 3 horarios posibles
+  for (int i = 0; i < NUM_HORARIOS; i++) {
+    int start = horariosMonitor[i].startMins;
+    int end = horariosMonitor[i].endMins;
+    
+    // Si el horario no está configurado (0 a 0), lo ignoramos para evitar falsos positivos
+    if (start == 0 && end == 0) continue; 
+
+    bool enHorario = false;
+
+    // Evaluamos el rango actual del bucle
+    if (start <= end) {
+      // Horario diurno normal (ej. 07:00 a 18:00)
+      enHorario = (currentMins >= start && currentMins <= end);
+    } else {
+      // Horario nocturno que cruza la medianoche (ej. 22:00 a 06:00)
+      enHorario = (currentMins >= start || currentMins <= end);
+    }
+
+    // Si coincide con este rango, retornamos true inmediatamente (ahorra procesamiento)
+    if (enHorario) {
+      return true;
+    }
   }
+
+  // Si termina de revisar los 3 horarios y en ninguno coincidió, estamos fuera de servicio
+  return false; 
 }
 
 void capturarYEnviarFoto(String mensajeTelegram) {
@@ -965,191 +1061,192 @@ void capturarYEnviarFoto(String mensajeTelegram) {
 }
 
 void onEnterInit() {
-  Serial.println("Entrando en STATE_INITIALIZING");
-  servos_init();
-  cargarHorario();
-  cargarCalibraciones();
+    Serial.println("Entrando en STATE_INITIALIZING");
+    servos_init();
+    cargarHorarios();
+    cargarCalibraciones();
+    cargarVelocidades();
 
-  if (!initCamera()) {
+    if (!initCamera()) {
         Serial.println("Sistema detenido por fallo de hardware.");
         while(true) { vTaskDelay(100); } // Bloquear si no hay cámara
-  }
+    }
 
-  // 1. Conexión WiFi inicial
-  Serial.print("Conectando a WiFi ");
-  WiFi.begin(currentSSID.c_str(), currentPASS.c_str());
-  
-  // Esperar conexión (bloqueante)
-  // IMPORTANTE: Si se va la luz y vuelve pero no hay internet, 
-  // el robot se quedará aquí "congelado" y no atacará palomas.
-  // ¿Es esto lo que quieres? Si sí, está perfecto.
-  int retryCount = 0;
-  while (WiFi.status() != WL_CONNECTED) {
+    // 1. Conexión WiFi inicial
+    Serial.print("Conectando a WiFi ");
+    WiFi.begin(currentSSID.c_str(), currentPASS.c_str());
+
+    // Esperar conexión (bloqueante)
+    // IMPORTANTE: Si se va la luz y vuelve pero no hay internet, 
+    // el robot se quedará aquí "congelado" y no atacará palomas.
+    // ¿Es esto lo que quieres? Si sí, está perfecto.
+    int retryCount = 0;
+    while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     vTaskDelay(pdMS_TO_TICKS(500));
-    
+
     // Opcional: Si tarda mucho, podrías reiniciar el ESP
     retryCount++;
     if(retryCount > 60) { // 30 segundos
         Serial.println("\nError WiFi: Reiniciando...");
         ESP.restart();
     }
-  }
-  
-  Serial.println("\nWiFi Conectado.");
+    }
 
-  // Configurar el servidor NTP (UTC-4 son -14400 segundos de desfase)
-  configTime(-14400, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.println("Hora sincronizada por NTP.");
-  
-  // Configurar SSL
-  secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
+    Serial.println("\nWiFi Conectado.");
 
-  // --- SEÑAL VERDE ---
-  // Avisamos a TaskTelegram que ya puede empezar a trabajar
-  wifiSystemReady = true;
-  FSMEvent e = EVENT_INIT_COMPLETE;
-  xQueueSend(fsmQueue, &e, 0);
+    // Configurar el servidor NTP (UTC-4 son -14400 segundos de desfase)
+    configTime(-14400, 0, "pool.ntp.org", "time.nist.gov");
+    Serial.println("Hora sincronizada por NTP.");
+
+    // Configurar SSL
+    secured_client.setCACert(TELEGRAM_CERTIFICATE_ROOT); 
+
+    // --- SEÑAL VERDE ---
+    // Avisamos a TaskTelegram que ya puede empezar a trabajar
+    wifiSystemReady = true;
+    FSMEvent e = EVENT_INIT_COMPLETE;
+    xQueueSend(fsmQueue, &e, 0);
 }
 
 void onEnterIdle() {
-  Serial.println("Entrando en STATE_IDLE");
-  Laser_01.off();
-  stopPattern(g_homeX[AREA_ACTUAL], g_homeY[AREA_ACTUAL]);
-  xTimerStop(monitoringTimer, 0);
-  xTimerStart(updateIdleLogicTimer, 0);
+    Serial.println("Entrando en STATE_IDLE");
+    Laser_01.off();
+    stopPattern(g_homeX[AREA_ACTUAL], g_homeY[AREA_ACTUAL]);
+    xTimerStop(monitoringTimer, 0);
+    xTimerStart(updateIdleLogicTimer, 0);
 }
 
 void onEnterMonitoring(){
-  Serial.println("Entrando en STATE_MONITORING");
-  Laser_01.off();
-  xTimerStart(monitoringTimer, 0);
+    Serial.println("Entrando en STATE_MONITORING");
+    Laser_01.off();
+    xTimerStart(monitoringTimer, 0);
 }
 
 void onEnterPicturePreAttack() {
-  Serial.println("Entrando en STATE_PICTURE_PRE_ATTACK");
-  xTimerStop(monitoringTimer, 0); // Detenemos el monitoreo
-  
-  // Llamamos a la función auxiliar con el texto de intrusión
-  capturarYEnviarFoto("🐦 ¡Posible paloma detectada! Iniciando secuencia láser de disuasión.");
+    Serial.println("Entrando en STATE_PICTURE_PRE_ATTACK");
+    xTimerStop(monitoringTimer, 0); // Detenemos el monitoreo
 
-  // Disparar el evento para pasar a STATE_ATTACKING
-  FSMEvent e = EVENT_PROCESSING_COMPLETE;
-  xQueueSend(fsmQueue, &e, 0);
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  }
+    // Llamamos a la función auxiliar con el texto de intrusión
+    capturarYEnviarFoto("🐦 ¡Posible paloma detectada! Iniciando secuencia láser de disuasión.");
+
+    // Disparar el evento para pasar a STATE_ATTACKING
+    FSMEvent e = EVENT_PROCESSING_COMPLETE;
+    xQueueSend(fsmQueue, &e, 0);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+}
 
 void onEnterPicturePostAttack() {
-  Serial.println("Entrando en STATE_PICTURE_POST_ATTACK");
-  
-  // Llamamos a la función auxiliar con el texto de verificación
-  capturarYEnviarFoto("✅ Secuencia láser finalizada. Verificando si el objetivo abandonó el área.");
+    Serial.println("Entrando en STATE_PICTURE_POST_ATTACK");
 
-  // Disparar el evento para volver a STATE_MONITORING o STATE_IDLE
-  FSMEvent e = EVENT_PROCESSING_COMPLETE;
-  xQueueSend(fsmQueue, &e, 0);
-  vTaskDelay(pdMS_TO_TICKS(1000));
+    // Llamamos a la función auxiliar con el texto de verificación
+    capturarYEnviarFoto("✅ Secuencia láser finalizada. Verificando si el objetivo abandonó el área.");
+
+    // Disparar el evento para volver a STATE_MONITORING o STATE_IDLE
+    FSMEvent e = EVENT_PROCESSING_COMPLETE;
+    xQueueSend(fsmQueue, &e, 0);
+    vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
 void onEnterAttacking(){
-  Serial.println("Entrando en STATE_ATTACKING");
-  xTimerStop(monitoringTimer, 0);
-  
-  // Lógica para elegir patrón aleatorio o rotativo
-  PatternType p = (random() % 2 == 0) ? PATTERN_ZIGZAG_HORIZ : PATTERN_ZIGZAG_VERT;
-  Laser_01.on();
+    Serial.println("Entrando en STATE_ATTACKING");
+    xTimerStop(monitoringTimer, 0);
 
-  // ✅ 1. Definimos cuántas áreas vamos a atacar en este ciclo
-  patCtx.totalAreas = 4; // Asegúrate de agregar esta variable a tu struct
-  patCtx.areaPhase = 0;  // Empezamos por la primera (fase 0)
+    // Lógica para elegir patrón aleatorio o rotativo
+    PatternType p = (random() % 2 == 0) ? PATTERN_ZIGZAG_HORIZ : PATTERN_ZIGZAG_VERT;
+    Laser_01.on();
 
-  patCtx.targetArea[0] = AREA_ACTUAL;
+    // ✅ 1. Definimos cuántas áreas vamos a atacar en este ciclo
+    patCtx.totalAreas = 4; // Asegúrate de agregar esta variable a tu struct
+    patCtx.areaPhase = 0;  // Empezamos por la primera (fase 0)
 
-  int index = 1;
-  for (int i = 0; i < patCtx.totalAreas; i++) {
-      if (i != AREA_ACTUAL) {
-          patCtx.targetArea[index] = i;
-          index++;
-      }
-  }
-  startPattern(p,
-      g_calibMinX[patCtx.targetArea[0]],
-      g_calibMaxX[patCtx.targetArea[0]],
-      g_calibMinY[patCtx.targetArea[0]],
-      g_calibMaxY[patCtx.targetArea[0]]
-  );
+    patCtx.targetArea[0] = AREA_ACTUAL;
+
+    int index = 1;
+    for (int i = 0; i < patCtx.totalAreas; i++) {
+        if (i != AREA_ACTUAL) {
+            patCtx.targetArea[index] = i;
+            index++;
+        }
+    }
+    startPattern(p,
+        g_calibMinX[patCtx.targetArea[0]],
+        g_calibMaxX[patCtx.targetArea[0]],
+        g_calibMinY[patCtx.targetArea[0]],
+        g_calibMaxY[patCtx.targetArea[0]]
+    );
 }
 
 void onEnterCalibSetLL(){
-  Serial.println("Entrando en STATE_CALIB_SET_LL");
-  Laser_01.on();
+    Serial.println("Entrando en STATE_CALIB_SET_LL");
+    Laser_01.on();
 }
 
 void onEnterCalibSetUR(){
-  Serial.println("Entrando en STATE_CALIB_SET_UR");
-  temp_X1 = SERVO_X.getPosition();
-  temp_Y1 = SERVO_Y.getPosition();
+    Serial.println("Entrando en STATE_CALIB_SET_UR");
+    temp_X1 = SERVO_X.getPosition();
+    temp_Y1 = SERVO_Y.getPosition();
         
-  Serial.println("Punto 1 capturado. Mueve al Punto 2.");
+    Serial.println("Punto 1 capturado. Mueve al Punto 2.");
 }
 
 void onEnterCalibSave(){
-  temp_X2 = SERVO_X.getPosition();
-  temp_Y2 = SERVO_Y.getPosition();
-  Serial.println("Punto 2 capturado.");
+    temp_X2 = SERVO_X.getPosition();
+    temp_Y2 = SERVO_Y.getPosition();
+    Serial.println("Punto 2 capturado.");
 
-  
-  // Guardamos en el índice del área actual
-  g_calibMinX[AREA_ACTUAL] = min(temp_X1, temp_X2);
-  g_calibMaxX[AREA_ACTUAL] = max(temp_X1, temp_X2);
-  g_calibMinY[AREA_ACTUAL] = min(temp_Y1, temp_Y2);
-  g_calibMaxY[AREA_ACTUAL] = max(temp_Y1, temp_Y2);
 
-  g_homeX[AREA_ACTUAL] = g_calibMinX[AREA_ACTUAL] + ((g_calibMaxX[AREA_ACTUAL] - g_calibMinX[AREA_ACTUAL]) / 2);
-  g_homeY[AREA_ACTUAL] = g_calibMinY[AREA_ACTUAL] + ((g_calibMaxY[AREA_ACTUAL] - g_calibMinY[AREA_ACTUAL]) / 2);
+    // Guardamos en el índice del área actual
+    g_calibMinX[AREA_ACTUAL] = min(temp_X1, temp_X2);
+    g_calibMaxX[AREA_ACTUAL] = max(temp_X1, temp_X2);
+    g_calibMinY[AREA_ACTUAL] = min(temp_Y1, temp_Y2);
+    g_calibMaxY[AREA_ACTUAL] = max(temp_Y1, temp_Y2);
 
-  // Llamamos a la nueva función de guardado
-  guardarCalibracion(AREA_ACTUAL);
+    g_homeX[AREA_ACTUAL] = g_calibMinX[AREA_ACTUAL] + ((g_calibMaxX[AREA_ACTUAL] - g_calibMinX[AREA_ACTUAL]) / 2);
+    g_homeY[AREA_ACTUAL] = g_calibMinY[AREA_ACTUAL] + ((g_calibMaxY[AREA_ACTUAL] - g_calibMinY[AREA_ACTUAL]) / 2);
 
-  Serial.printf("Calibracion Área %d: X[%i - %i], Y[%i - %i]\n", 
+    // Llamamos a la nueva función de guardado
+    guardarCalibracion(AREA_ACTUAL);
+
+    Serial.printf("Calibracion Área %d: X[%i - %i], Y[%i - %i]\n", 
                 AREA_ACTUAL + 1, g_calibMinX[AREA_ACTUAL], g_calibMaxX[AREA_ACTUAL], 
                 g_calibMinY[AREA_ACTUAL], g_calibMaxY[AREA_ACTUAL]);
-  vTaskDelay(pdMS_TO_TICKS(3000));
-  FSMEvent e = EVENT_CALIBRATION_DONE;
-  xQueueSend(fsmQueue, &e, 0);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    FSMEvent e = EVENT_CALIBRATION_DONE;
+    xQueueSend(fsmQueue, &e, 0);
 }
 
 void onEnterCalibPrev(){
-  Serial.println("Entrando en STATE_CALIB_PREVIEW");
-  Laser_01.on();
-  startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX[AREA_ACTUAL], g_calibMaxX[AREA_ACTUAL], g_calibMinY[AREA_ACTUAL], g_calibMaxY[AREA_ACTUAL]);
+    Serial.println("Entrando en STATE_CALIB_PREVIEW");
+    Laser_01.on();
+    startPattern(PATTERN_RECTANGLE_PREVIEW, g_calibMinX[AREA_ACTUAL], g_calibMaxX[AREA_ACTUAL], g_calibMinY[AREA_ACTUAL], g_calibMaxY[AREA_ACTUAL]);
 }
 
 // FSM principal
 void TaskFSM(void *pvParameters) {
-  (void) pvParameters;
+    (void) pvParameters;
 
-  FSMEvent receivedEvent;
-  SystemState currentState = STATE_INITIALIZING; // Estado inicial explícito
-  SystemState newState = STATE_INITIALIZING; // Estado inicial explícito
+    FSMEvent receivedEvent;
+    SystemState currentState = STATE_INITIALIZING; // Estado inicial explícito
+    SystemState newState = STATE_INITIALIZING; // Estado inicial explícito
 
-  // Crear el timer (5 minutos, one-shot o auto-reload según prefieras logicamente)
-  // Aquí uso auto-reload false para controlarlo manualmente en los estados
-  monitoringTimer = xTimerCreate("MonTimer", pdMS_TO_TICKS(MONITORING_INTERVAL_MS), pdFALSE, 0, monitoringTimerCallback);
-  updateIdleLogicTimer = xTimerCreate("IdleLogicTimer", pdMS_TO_TICKS(60000), pdTRUE, 0, updateIdleLogicTimerCallback); // Chequeo cada minuto
-  
-  // Establecer estado inicial y ejecutar su acción de entrada
-  setState(currentState);
-  onEnterInit();
+    // Crear el timer (5 minutos, one-shot o auto-reload según prefieras logicamente)
+    // Aquí uso auto-reload false para controlarlo manualmente en los estados
+    monitoringTimer = xTimerCreate("MonTimer", pdMS_TO_TICKS(MONITORING_INTERVAL_MS), pdFALSE, 0, monitoringTimerCallback);
+    updateIdleLogicTimer = xTimerCreate("IdleLogicTimer", pdMS_TO_TICKS(60000), pdTRUE, 0, updateIdleLogicTimerCallback); // Chequeo cada minuto
 
-  for (;;) {
+    // Establecer estado inicial y ejecutar su acción de entrada
+    setState(currentState);
+    onEnterInit();
+
+    for (;;) {
     if (xQueueReceive(fsmQueue, &receivedEvent, portMAX_DELAY)) {
-      SystemState state = getState();
-      
-      newState = currentState; // Por defecto, no hay cambio de estado
-      
-      // LÓGICA DE TRANSICIÓN: solo decide el siguiente estado
-      switch (currentState) {
+        SystemState state = getState();
+        
+        newState = currentState; // Por defecto, no hay cambio de estado
+        
+        // LÓGICA DE TRANSICIÓN: solo decide el siguiente estado
+        switch (currentState) {
         case STATE_INITIALIZING:
             if (receivedEvent == EVENT_INIT_COMPLETE) newState = STATE_IDLE;
             break;
@@ -1203,162 +1300,162 @@ void TaskFSM(void *pvParameters) {
         case STATE_ERROR:
             if (receivedEvent == EVENT_RESUME) newState = STATE_IDLE;
             break;
-      }
+        }
 
-      // APLICAR CAMBIO DE ESTADO Y EJECUTAR ACCIÓN DE ENTRADA
-      if (newState != currentState) {
-          setState(newState);
+        // APLICAR CAMBIO DE ESTADO Y EJECUTAR ACCIÓN DE ENTRADA
+        if (newState != currentState) {
+            setState(newState);
 
-          switch (newState) {
-              case STATE_INITIALIZING: onEnterInit(); break;
-              case STATE_IDLE: onEnterIdle(); break;
-              case STATE_MONITORING: onEnterMonitoring(); break;
-              case STATE_PICTURE_PRE_ATTACK: onEnterPicturePreAttack(); break;
-              case STATE_PICTURE_POST_ATTACK: onEnterPicturePostAttack(); break;
-              case STATE_ATTACKING: onEnterAttacking(); break;
-              case STATE_CALIB_SET_LL: onEnterCalibSetLL(); break;
-              case STATE_CALIB_SET_UR: onEnterCalibSetUR(); break;
-              case STATE_CALIB_SAVE: onEnterCalibSave(); break;
-              case STATE_CALIB_PREVIEW: onEnterCalibPrev(); break;
-          }
-      }
-      currentState = newState; // Actualizar estado actual
+            switch (newState) {
+                case STATE_INITIALIZING: onEnterInit(); break;
+                case STATE_IDLE: onEnterIdle(); break;
+                case STATE_MONITORING: onEnterMonitoring(); break;
+                case STATE_PICTURE_PRE_ATTACK: onEnterPicturePreAttack(); break;
+                case STATE_PICTURE_POST_ATTACK: onEnterPicturePostAttack(); break;
+                case STATE_ATTACKING: onEnterAttacking(); break;
+                case STATE_CALIB_SET_LL: onEnterCalibSetLL(); break;
+                case STATE_CALIB_SET_UR: onEnterCalibSetUR(); break;
+                case STATE_CALIB_SAVE: onEnterCalibSave(); break;
+                case STATE_CALIB_PREVIEW: onEnterCalibPrev(); break;
+            }
+        }
+        currentState = newState; // Actualizar estado actual
     }
-  }
+    }
 }
 
 void TaskServoControl(void *pvParameters) {
-  (void) pvParameters;
-  
-  // Aseguramos que no haya patrón activo al inicio
-  patCtx.active = false;
-  
-  vTaskDelay(pdMS_TO_TICKS(1000));
-  ManualPosCmd receivedCmd;
+    (void) pvParameters;
 
-  for (;;) {
+    // Aseguramos que no haya patrón activo al inicio
+    patCtx.active = false;
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    ManualPosCmd receivedCmd;
+
+    for (;;) {
     // A. ¿Hay un patrón automático activo?
-    
+
     if (patCtx.active) {
-       updatePatternLogic();
-       xQueueReset(manualControlQueue); 
+        updatePatternLogic();
+        xQueueReset(manualControlQueue); 
     } 
     // B. Si NO hay patrón, verificamos si hay comandos manuales
     else {
-       // Revisamos la cola.
-      if (xQueueReceive(manualControlQueue, &receivedCmd, 0) == pdTRUE) {
-          
-          if (receivedCmd.cmdType == 0) {
-              // Comando para X
-              SERVO_X.setTarget((int)receivedCmd.value);
-              
-          } else {
-              // Comando para Y
-              SERVO_Y.setTarget((int)receivedCmd.value);
-          }
-      }
+        // Revisamos la cola.
+        if (xQueueReceive(manualControlQueue, &receivedCmd, 0) == pdTRUE) {
+            
+            if (receivedCmd.cmdType == 0) {
+                // Comando para X
+                SERVO_X.setTarget((int)receivedCmd.value);
+                
+            } else {
+                // Comando para Y
+                SERVO_Y.setTarget((int)receivedCmd.value);
+            }
+        }
     }
 
     // C. Mover los servos físicamente hacia el objetivo actual
     SERVO_X.update();
     SERVO_Y.update();
-    
+
     vTaskDelay(pdMS_TO_TICKS(SPEED_MS)); 
-  }
+    }
 }
 
 void TaskComms(void *pvParameters) {
-  (void) pvParameters;
-  
-  TickType_t lastHeartbeat = xTaskGetTickCount();
-  
-  for (;;) {
+    (void) pvParameters;
+
+    TickType_t lastHeartbeat = xTaskGetTickCount();
+
+    for (;;) {
     // Comunicación Serial con Mini PC
-    
+
     if (Serial.available()) {
-      String msg = Serial.readStringUntil('\n');
-      msg.trim();
-      
-      if (msg.equals("CMD,START")) {
+        String msg = Serial.readStringUntil('\n');
+        msg.trim();
+        
+        if (msg.equals("CMD,START")) {
         FSMEvent e = EVENT_START_COMMAND;
         xQueueSend(fsmQueue, &e, 0);
         //Serial.println("ACK,NAVIGATE");
-      } 
-      else if (msg.equals("CMD,STOP")) {
+        } 
+        else if (msg.equals("CMD,STOP")) {
         FSMEvent e = EVENT_STOP_COMMAND;
         xQueueSend(fsmQueue, &e, 0);
         //Serial.println("ACK,STOP");
-      }
-      else if (msg.equals("CMD,RESUME")) {
+        }
+        else if (msg.equals("CMD,RESUME")) {
         FSMEvent e = EVENT_RESUME;
         xQueueSend(fsmQueue, &e, 0);
         //Serial.println("ACK,RESUME");
-      }
-      else if (msg.equals("X:")) {
-          // Extraer el valor después de "X:"
-          String valStr = msg.substring(2); // 2 es la longitud de "X:"
-          ManualPosCmd cmd;
-          cmd.cmdType = 0; // 0 para Eje X
-          cmd.value = valStr.toInt();
+        }
+        else if (msg.equals("X:")) {
+            // Extraer el valor después de "X:"
+            String valStr = msg.substring(2); // 2 es la longitud de "X:"
+            ManualPosCmd cmd;
+            cmd.cmdType = 0; // 0 para Eje X
+            cmd.value = valStr.toInt();
 
-          // Enviar a la cola del Servo (no bloqueante)
-          xQueueSend(manualControlQueue, &cmd, 0);
+            // Enviar a la cola del Servo (no bloqueante)
+            xQueueSend(manualControlQueue, &cmd, 0);
 
-          Serial.println(cmd.value);
-      }
-      else if (msg.equals("Y:")) {
-          // Extraer el valor después de "Y:"
-          String valStr = msg.substring(2); // 2 es la longitud de "Y:"
-          ManualPosCmd cmd;
-          cmd.cmdType = 1; // 1 para Eje Y
-          cmd.value = valStr.toInt();
+            Serial.println(cmd.value);
+        }
+        else if (msg.equals("Y:")) {
+            // Extraer el valor después de "Y:"
+            String valStr = msg.substring(2); // 2 es la longitud de "Y:"
+            ManualPosCmd cmd;
+            cmd.cmdType = 1; // 1 para Eje Y
+            cmd.value = valStr.toInt();
 
-          // Enviar a la cola del Servo (no bloqueante)
-          xQueueSend(manualControlQueue, &cmd, 0);
+            // Enviar a la cola del Servo (no bloqueante)
+            xQueueSend(manualControlQueue, &cmd, 0);
 
-          Serial.println(cmd.value);
-      }
-      else if (msg.equals("CONFIRM_LL")) {
-          // Extraer el valor después de "Y:"
-          Serial.println("DEBUG: Comando CONFIRM_LL recibido");
+            Serial.println(cmd.value);
+        }
+        else if (msg.equals("CONFIRM_LL")) {
+            // Extraer el valor después de "Y:"
+            Serial.println("DEBUG: Comando CONFIRM_LL recibido");
 
-          FSMEvent e = EVENT_CONFIRM_POINT;
-          xQueueSend(fsmQueue, &e, 0);;
-      }
-      else if (msg.equals("CONFIRM_UR")) {
-          // Extraer el valor después de "Y:"
-          Serial.println("DEBUG: Comando CONFIRM_UR recibido");
+            FSMEvent e = EVENT_CONFIRM_POINT;
+            xQueueSend(fsmQueue, &e, 0);;
+        }
+        else if (msg.equals("CONFIRM_UR")) {
+            // Extraer el valor después de "Y:"
+            Serial.println("DEBUG: Comando CONFIRM_UR recibido");
 
-          FSMEvent e = EVENT_CONFIRM_POINT;
-          xQueueSend(fsmQueue, &e, 0);;
-      }
-      else if (msg.equals("SimulatePigeon")) {
-          // Extraer el valor después de "Y:"
-          Serial.println("DEBUG: Comando SimulatePigeon recibido");
+            FSMEvent e = EVENT_CONFIRM_POINT;
+            xQueueSend(fsmQueue, &e, 0);;
+        }
+        else if (msg.equals("SimulatePigeon")) {
+            // Extraer el valor después de "Y:"
+            Serial.println("DEBUG: Comando SimulatePigeon recibido");
 
-          FSMEvent e = EVENT_PIGEON_DETECTED;
-          xQueueSend(fsmQueue, &e, 0);;
-      }
+            FSMEvent e = EVENT_PIGEON_DETECTED;
+            xQueueSend(fsmQueue, &e, 0);;
+        }
 
-      else {
+        else {
         Serial.println("ERROR,UNKNOWN_CMD");
-      }
+        }
     }
     vTaskDelay(pdMS_TO_TICKS(100));
-  }
+    }
 }
 
 void TaskTelegram(void *pvParameters) {
-  (void) pvParameters;
-  
-  // --- ESPERA DE SEGURIDAD ---
-  // No hacer NADA hasta que onEnterInit termine la conexión inicial
-  while (!wifiSystemReady) {
-      vTaskDelay(pdMS_TO_TICKS(100));
-  }
-  bool firstRun = true;
-  Serial.println("Telegram Task: Iniciando polling...");
-  for (;;) {
+    (void) pvParameters;
+
+    // --- ESPERA DE SEGURIDAD ---
+    // No hacer NADA hasta que onEnterInit termine la conexión inicial
+    while (!wifiSystemReady) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    bool firstRun = true;
+    Serial.println("Telegram Task: Iniciando polling...");
+    for (;;) {
     // Verificar conexión WiFi y reconectar si es necesario
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi perdido, reconectando...");
@@ -1370,13 +1467,13 @@ void TaskTelegram(void *pvParameters) {
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
     while (numNewMessages) {
-      handleNewMessages(numNewMessages);
-      numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+        handleNewMessages(numNewMessages);
+        numNewMessages = bot.getUpdates(bot.last_message_received + 1);
     }
     if (getState() == STATE_IDLE && firstRun) {
-      enviarMenu(CHAT_ID_PERMITIDO);
-      firstRun = false;
+        enviarMenu(CHAT_ID_PERMITIDO);
+        firstRun = false;
     }
     vTaskDelay(pdMS_TO_TICKS(BOT_MTBS)); 
-  }
+    }
 }

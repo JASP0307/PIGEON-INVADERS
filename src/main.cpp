@@ -15,13 +15,6 @@
 #define ZIGZAG_STEP_SIZE 1.0f // Cuánto avanza en el eje secundario
 #define TARGET_TOLERANCE 0.1f  // Margen de error para decir "llegué"
 
-// Credenciales Wi-Fi
-/*
-#define WIFI_SSID "FamiliaSuárez"
-#define WIFI_PASSWORD "RigobertoSuarez"
-//#define WIFI_SSID "CLAROV6RCY"
-//#define WIFI_PASSWORD "48575443AFC7839E"
-*/
 // Redes conocidas
 const char* SSID_FAMILIA = "FamiliaSuárez";
 const char* PASS_FAMILIA = "RigobertoSuarez";
@@ -30,8 +23,8 @@ const char* SSID_CLARO = "CLAROV6RCY";
 const char* PASS_CLARO = "48575443AFC7839E";
 
 // Variables de estado de red (inician con tu red principal)
-String currentSSID = SSID_CLARO;
-String currentPASS = PASS_CLARO;
+String currentSSID = SSID_FAMILIA;
+String currentPASS = PASS_FAMILIA;
 
 // Estructura para pasar el "paquete de evidencia"
 // Credenciales Telegram
@@ -89,6 +82,7 @@ void procesarMensajeTelegram(String text, String chat_id);
 void stopPattern(int x_home, int y_home);
 void cargarHorarios();
 void cargarCalibraciones();
+void cargarVelocidades();
 
 
 SystemState getState();
@@ -120,7 +114,7 @@ void setup() {
     }
 
     // Crear tareas
-    xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 2, NULL, 0);
+    xTaskCreatePinnedToCore(TaskTelegram,               "Telegram",     10240, NULL, 1, NULL, 0);
     //xTaskCreatePinnedToCore(TaskComms,                  "Comms",        2048, NULL, 1, NULL, 0);
     xTaskCreatePinnedToCore(TaskFSM,                    "FSM",          10240, NULL, 3, NULL, 1);
     xTaskCreatePinnedToCore(TaskServoControl,           "ServoControl", 4096, NULL, 3, NULL, 1);
@@ -379,7 +373,7 @@ void updateIdleLogicTimerCallback(TimerHandle_t xTimer) {
     if (!isWithinOperatingHours() && getState() == STATE_MONITORING) {
         FSMEvent e = EVENT_STOP_COMMAND;
         xQueueSend(fsmQueue, &e, 0); 
-    }else if (getState() == STATE_IDLE) {
+    }else if (isWithinOperatingHours() && getState() == STATE_IDLE) {
         FSMEvent e = EVENT_START_COMMAND;
         xQueueSend(fsmQueue, &e, 0); 
     }
@@ -559,7 +553,7 @@ void guardarHorario(int index, int startMins, int endMins) {
     horariosMonitor[index].startMins = startMins;
     horariosMonitor[index].endMins = endMins;
 
-    Serial.printf("Horario %d actualizado: %d a %d minutos\n", index + 1, startMins, endMins);
+    Serial.printf("Horario %d actualizado: %d a %d\n", index + 1, startMins, endMins);
 }
 
 // Función para guardar (llamar cuando Telegram reciba el comando)
@@ -579,7 +573,7 @@ void guardarSpeed(int ms) {
     preferences.end();
 
     SPEED_MS = ms; 
-    Serial.printf("Velocidad actualizada: %d segundos\n", ms);
+    Serial.printf("Velocidad actualizada: %d milisegundos\n", ms);
 }
 
 void procesarComandos(const String &text, const String &chat_id) {
@@ -834,7 +828,9 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
 
     const char* host = "api.telegram.org";
     const int port = 443;
-
+    Serial.printf("RAM libre: %d bytes\n", ESP.getFreeHeap());
+    // Darle un breve respiro al procesador antes de iniciar TLS
+    delay(100); 
     Serial.println("Conectando a Telegram para enviar captura...");
 
     if (!client.connect(host, port)) {
@@ -845,12 +841,12 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
     // Construir las fronteras (boundaries) de la petición Multipart
     String boundary = "----PigeonBoundary123456789";
     
-    // Cabecera del payload multipart (AHORA CON CAPTION)
+    // Cabecera del payload multipart
     String head = "--" + boundary + "\r\n";
     head += "Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n";
     head += chat_id + "\r\n";
     
-    // Agregamos el campo caption
+    // Campo caption
     head += "--" + boundary + "\r\n";
     head += "Content-Disposition: form-data; name=\"caption\"\r\n\r\n";
     head += caption + "\r\n";
@@ -862,7 +858,7 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
     // Cierre del payload multipart
     String tail = "\r\n--" + boundary + "--\r\n";
 
-    // Calcular la longitud total de la petición HTTP
+    // Calcular la longitud total exacta de la petición HTTP
     uint32_t totalLen = head.length() + photoLen + tail.length();
 
     // 1. Enviar HTTP Headers
@@ -870,33 +866,42 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
     client.println("Host: " + String(host));
     client.println("Content-Length: " + String(totalLen));
     client.println("Content-Type: multipart/form-data; boundary=" + boundary);
-    client.println(); // Línea en blanco indica fin de los headers
+    client.println("Connection: close"); // Decirle al servidor que cierre al terminar
+    client.println(); // Fin de headers
 
-    // 2. Enviar el inicio del Body (Chat ID y metadatos)
-    client.print(head);
+    // 2. Enviar el inicio del Body usando write (más seguro para la longitud exacta)
+    client.write((uint8_t*)head.c_str(), head.length());
     
-    // 3. Enviar la FOTO en bloques (chunks) para no saturar el Watchdog de FreeRTOS
-    size_t chunkSize = 1024; 
+    // 3. Enviar la FOTO en bloques (chunks)
+    size_t chunkSize = 2048; // Subido a 2KB para acelerar el envío si los buffers lo permiten
     for (size_t i = 0; i < photoLen; i += chunkSize) {
         size_t currentChunk = (photoLen - i < chunkSize) ? (photoLen - i) : chunkSize;
         client.write(photoBuf + i, currentChunk);
         
-        // Pequeño respiro para que FreeRTOS atienda otras tareas si es necesario
-        vTaskDelay(pdMS_TO_TICKS(1)); 
+        // Optimización: yield() es más amigable con el core de red que vTaskDelay en este punto
+        yield(); 
     }
     
     // 4. Enviar el cierre del Body
-    client.print(tail);
+    client.write((uint8_t*)tail.c_str(), tail.length());
+    client.flush(); // Asegurar que todo se mandó por el chip de Wi-Fi
 
-    // 5. Leer la respuesta del servidor para confirmar (opcional pero muy útil)
+    // 5. Leer la respuesta de Telegram
     String response = "";
-    while (client.connected()) {
-        String line = client.readStringUntil('\n');
-        if (line == "\r") {
-            break; // Fin de los headers de respuesta
+    // Esperar un máximo de 5 segundos a que responda el servidor
+    uint32_t timeout = millis();
+    while (client.connected() && millis() - timeout < 5000) {
+        if (client.available()) {
+            String line = client.readStringUntil('\n');
+            if (line == "\r") {
+                break; // Fin de headers de respuesta
+            }
         }
     }
-    response = client.readStringUntil('\n'); // Leer la primera línea del JSON de respuesta
+    
+    if (client.available()) {
+        response = client.readStringUntil('\n'); // Capturar el JSON de respuesta
+    }
     
     client.stop();
 
@@ -904,7 +909,7 @@ bool enviarFotoTelegram(String chat_id, uint8_t *photoBuf, size_t photoLen, Stri
         Serial.println("✅ ¡Foto enviada con éxito!");
         return true;
     } else {
-        Serial.println("❌ Error de la API de Telegram: " + response);
+        Serial.println("❌ Error de la API de Telegram o respuesta vacía: " + response);
         return false;
     }
 }

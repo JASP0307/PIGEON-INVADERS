@@ -1,6 +1,10 @@
 #ifndef SYSTEM_DEFINITIONS_H
 #define SYSTEM_DEFINITIONS_H
 
+#include <Preferences.h>
+#include "ServoModule.h"
+#include "Laser.h"
+
 // --- PINES EXACTOS PARA FREENOVE ESP32-S3 WROOM CAM ---
 #define PWDN_GPIO_NUM  -1
 #define RESET_GPIO_NUM -1
@@ -20,25 +24,20 @@
 #define HREF_GPIO_NUM  7
 #define PCLK_GPIO_NUM  13
 
-//#define MONITORING_INTERVAL_MS (2 * 60 * 1000) // 2 minutos en milisegundos
-
-// Este archivo centraliza todas las definiciones lógicas, constantes de comportamiento,
-// y enumeraciones para la Máquina de Estados Finitos (FSM) del robot.
-
 // =================================================================
 // 1. ESTADOS DE LA MÁQUINA DE ESTADOS (FSM)
 // =================================================================
 enum SystemState {
-  STATE_INITIALIZING,      // Encendido, conexión WiFi y Telegram
-  STATE_IDLE,              // Esperando comando Start (Láser apagado)
-  STATE_MONITORING,        // Vigilancia intermitente (Loop de 5 min)
-  STATE_PICTURE_PRE_ATTACK,  // Toma foto y luego ataca
-  STATE_PICTURE_POST_ATTACK, // Toma foto y vuelve a monitorear
-  STATE_ATTACKING,         // Láser ON, moviendo servos, reporte
-  STATE_CALIB_SET_LL,      // Calibración: Esperando definir Límite Inferior Izquierdo
-  STATE_CALIB_SET_UR,      // Calibración: Esperando definir Límite Superior Derecho
-  STATE_CALIB_SAVE,        // Calibración: Guardando datos y calculando home
-  STATE_CALIB_PREVIEW,     // Calibración: Dibujando recuadro para confirmación visual
+  STATE_INITIALIZING,
+  STATE_IDLE,
+  STATE_MONITORING,
+  STATE_PICTURE_PRE_ATTACK,
+  STATE_PICTURE_POST_ATTACK,
+  STATE_ATTACKING,
+  STATE_CALIB_SET_LL,
+  STATE_CALIB_SET_UR,
+  STATE_CALIB_SAVE,
+  STATE_CALIB_PREVIEW,
   STATE_ERROR
 };
 
@@ -46,114 +45,131 @@ enum SystemState {
 // 2. EVENTOS DE LA MÁQUINA DE ESTADOS (FSM)
 // =================================================================
 typedef enum {
-    EVENT_NONE,                  // Sin evento
-    EVENT_INIT_COMPLETE,         // WiFi y Telegram listos
-    EVENT_START_COMMAND,         // Usuario envía "Start"
-    EVENT_STOP_COMMAND,          // Usuario envía "Stop"
-    EVENT_MANUAL_COMMAND,        // Usuario envía "Comando de ataque"
-    EVENT_TIMER_EXPIRED,         // Pasaron los 5 minutos de espera
-    EVENT_TAKE_PICTURE,          // Usuario solicita tomar foto manualmente
-    EVENT_PROCESSING_COMPLETE,   // Terminó de procesar la foto
-    EVENT_PIGEON_DETECTED,       // Visión artificial confirma paloma
-    EVENT_NO_PIGEON,             // Visión artificial confirma zona limpia
-    EVENT_ATTACK_COMPLETE,       // Terminó el patrón de servos y reporte
-    EVENT_ENTER_CALIBRATION,     // Usuario solicita modo calibración
-    EVENT_ENTER_PREVIEW,         // Usuario solicita modo preview (solo dibujar recuadro)
-    EVENT_CONFIRM_POINT,         // Usuario confirma un punto (LL o UR)
-    EVENT_CALIBRATION_DONE,      // Usuario confirma que el recuadro es correcto
-    EVENT_PREVIEW_DONE,          // El patrón de preview terminó de ejecutarse
+    EVENT_NONE,
+    EVENT_INIT_COMPLETE,
+    EVENT_START_COMMAND,
+    EVENT_STOP_COMMAND,
+    EVENT_MANUAL_COMMAND,
+    EVENT_TIMER_EXPIRED,
+    EVENT_TAKE_PICTURE,
+    EVENT_PROCESSING_COMPLETE,
+    EVENT_PIGEON_DETECTED,
+    EVENT_NO_PIGEON,
+    EVENT_ATTACK_COMPLETE,
+    EVENT_ENTER_CALIBRATION,
+    EVENT_ENTER_PREVIEW,
+    EVENT_CONFIRM_POINT,
+    EVENT_CALIBRATION_DONE,
+    EVENT_PREVIEW_DONE,
     EVENT_RESUME
 } FSMEvent;
 
 // =================================================================
-// 3. DEFINIENDO PATRONES DE MOVIMIENTO LÁSER
+// 3. TIPOS Y ESTRUCTURAS
 // =================================================================
 
-// Estado protegido por mutex
-volatile SystemState currentState = STATE_INITIALIZING;
-
 typedef enum {
-    PATTERN_NONE,
     PATTERN_RECTANGLE_PREVIEW,
     PATTERN_ZIGZAG_HORIZ,
     PATTERN_ZIGZAG_VERT
 } PatternType;
 
-// 0 = Área 1, 1 = Área 2, 2 = Área 3, 3 = Área 4
 const int AREAS = 4;
-int AREA_ACTUAL = 0; 
 
 typedef struct {
     PatternType currentType;
     bool active;
-    int stepIndex;       // En qué paso del patrón vamos
-    int direction;       // 1 o -1 (para saber si vamos o venimos en el zigzag)
-    float currentX;      // Posición actual X calculada
-    float currentY;      // Posición actual Y calculada
-    int areaPhase;      // 0 = primera área, 1 = segunda área
-    int targetArea[AREAS];  // Índices de las dos áreas a atacar
-    int totalAreas;     // Cuántas áreas vamos a atacar en este ciclo (1 o 2)
-    // Límites locales copiados de la calibración global
-    float minX, maxX, minY, maxY; 
+    int stepIndex;
+    int areaPhase;
+    int targetArea[AREAS];
+    int totalAreas;
+    float minX, maxX, minY, maxY;
 } PatternContext;
-
-PatternContext patCtx;
-
-//int g_calibMinX = 0, g_calibMaxX = 100, g_calibMinY = 0, g_calibMaxY = 100, stepSize = 2, stepSizefast = 10;
-int stepSize = 2, stepSizefast = 10; 
-
-int MONITORING_INTERVAL_MS = (2 * 60 * 1000); // 2 minutos en milisegundos
-
-// Arreglos para guardar los datos de 4 áreas [Área 1, Área 2, Área 3, Área 4]
-int g_calibMinX[AREAS] = {0, 0, 0, 0};
-int g_calibMaxX[AREAS] = {100, 100, 100, 100};
-int g_calibMinY[AREAS] = {0, 0, 0, 0};
-int g_calibMaxY[AREAS] = {100, 100, 100, 100};
-
-int g_homeX[AREAS] = {90, 90, 90, 90};
-int g_homeY[AREAS] = {90, 90, 90, 90};
-
-int currentPan = 90;  
-int currentTilt = 90;
-bool movido = false;
 
 typedef struct {
     int cmdType; // 0 = Set X, 1 = Set Y
-    int value;   // El valor del ángulo/posición
+    int value;
 } ManualPosCmd;
 
-typedef struct {
-  camera_fb_t* fotoAntes;
-  camera_fb_t* fotoDespues;
-  unsigned long timestamp;
-} EvidenciaAtaque;
-
-enum class BotState {
-  IDLE,           // Sistema detenido
-  RUNNING,        // Vigilando activamente
-  CALIBRATING_1,  // Moviendo a esquina INF-IZQ
-  CALIBRATING_2,  // Moviendo a esquina SUP-DER
-  CONFIRMING_CAL  // Mostrando resumen para confirmar
-};
-
-// Define esto en la parte superior de tu código, junto a tus variables globales
 struct RangoHorario {
   int startMins = 0;
   int endMins = 0;
 };
 
 const int NUM_HORARIOS = 3;
-RangoHorario horariosMonitor[NUM_HORARIOS];
 
-int temp_X1 = 0, temp_Y1 = 90;
-int temp_X2 = 90, temp_Y2 = 0;
+// =================================================================
+// 4. DECLARACIONES EXTERNAS DE VARIABLES GLOBALES
+//    (Definidas en main.cpp)
+// =================================================================
+
+// Estado de la FSM
+extern volatile SystemState currentState;
+
+// Área de calibración actual (0-3)
+extern int AREA_ACTUAL;
+
+// Contexto del patrón de movimiento del láser
+extern PatternContext patCtx;
+
+// Parámetros de movimiento manual
+extern int stepSize;
+extern int stepSizefast;
+
+// Intervalo de monitoreo en milisegundos
+extern int MONITORING_INTERVAL_MS;
+
+// Datos de calibración de las 4 áreas
+extern int g_calibMinX[AREAS];
+extern int g_calibMaxX[AREAS];
+extern int g_calibMinY[AREAS];
+extern int g_calibMaxY[AREAS];
+
+// Posiciones home de las 4 áreas
+extern int g_homeX[AREAS];
+extern int g_homeY[AREAS];
+
+// Posición manual actual de los servos
+extern int currentPan;
+extern int currentTilt;
+
+// Horarios de monitoreo
+extern RangoHorario horariosMonitor[NUM_HORARIOS];
+
+// Puntos temporales de calibración
+extern int temp_X1, temp_Y1;
+extern int temp_X2, temp_Y2;
 
 // Bandera para sincronizar el arranque
-volatile bool wifiSystemReady = false;
+extern volatile bool wifiSystemReady;
 
-Preferences preferences; // Objeto para acceder a la memoria NVS
+// Objeto NVS para persistencia
+extern Preferences preferences;
 
-int startMonitorTime = 420; // 07:00 por defecto
-int endMonitorTime = 1080;  // 18:00 por defecto
-int SPEED_MS = 50; // Velocidad de movimiento en milisegundos (default)
+// Velocidad de movimiento de servos en ms
+extern int SPEED_MS;
+
+// =================================================================
+// HANDLES FreeRTOS (definidos en main.cpp)
+// =================================================================
+
+extern QueueHandle_t fsmQueue;
+extern QueueHandle_t manualControlQueue;
+
+// =================================================================
+// FUNCIONES GLOBALES (definidas en main.cpp)
+// =================================================================
+
+SystemState getState();
+void setState(SystemState newState);
+String SystemStateToString(SystemState state);
+
+// =================================================================
+// OBJETOS GLOBALES DE HARDWARE (definidos en main.cpp)
+// =================================================================
+
+extern ServoModule SERVO_X;
+extern ServoModule SERVO_Y;
+extern Laser Laser_01;
+
 #endif // SYSTEM_DEFINITIONS_H

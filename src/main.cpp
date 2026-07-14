@@ -63,6 +63,8 @@ volatile bool wifiSystemReady = false;
 Preferences preferences;
 
 int SPEED_MS = 50;
+const int HOME_SPEED_MS = 50;
+bool initialHomeMovement = false;
 
 // =================================================================
 
@@ -160,9 +162,11 @@ String SystemStateToString(SystemState state) {
 }
 
 void servos_init() {
-    SERVO_X.begin();
-    SERVO_Y.begin();
-    Serial.println("Servos inicializados.");
+    int savedX = cargarPosicionServosX();
+    int savedY = cargarPosicionServosY();
+    SERVO_X.begin(savedX);
+    SERVO_Y.begin(savedY);
+    Serial.printf("Servos inicializados en posición guardada: X=%d, Y=%d\n", savedX, savedY);
 }
 
 // Callback del Timer (se ejecuta cuando expiran los 5 mins)
@@ -239,6 +243,7 @@ void onEnterInit() {
 void onEnterIdle() {
     Serial.println("Entrando en STATE_IDLE");
     Laser_01.off();
+    initialHomeMovement = true;
     stopPattern(g_homeX[AREA_ACTUAL], g_homeY[AREA_ACTUAL]);
     xTimerStop(monitoringTimer, 0);
     xTimerStart(updateIdleLogicTimer, 0);
@@ -459,6 +464,7 @@ void TaskServoControl(void *pvParameters) {
 
     vTaskDelay(pdMS_TO_TICKS(1000));
     ManualPosCmd receivedCmd;
+    int idleCounter = 0;
 
     for (;;) {
     // A. ¿Hay un patrón automático activo?
@@ -487,6 +493,27 @@ void TaskServoControl(void *pvParameters) {
     SERVO_X.update();
     SERVO_Y.update();
 
-    vTaskDelay(pdMS_TO_TICKS(SPEED_MS)); 
+    if (initialHomeMovement) {
+        if (SERVO_X.getPosition() == SERVO_X.getTarget() &&
+            SERVO_Y.getPosition() == SERVO_Y.getTarget()) {
+            initialHomeMovement = false;
+            guardarPosicionServos(SERVO_X.getPosition(), SERVO_Y.getPosition());
+            Serial.println("Home movement complete, resuming normal speed");
+        }
+        vTaskDelay(pdMS_TO_TICKS(HOME_SPEED_MS));
+    } else {
+        // Guardar posición periódicamente cuando los servos están en reposo
+        if (SERVO_X.getPosition() == SERVO_X.getTarget() &&
+            SERVO_Y.getPosition() == SERVO_Y.getTarget()) {
+            idleCounter++;
+            if (idleCounter >= 600) { // ~30s a 50ms
+                idleCounter = 0;
+                guardarPosicionServos(SERVO_X.getPosition(), SERVO_Y.getPosition());
+            }
+        } else {
+            idleCounter = 0;
+        }
+        vTaskDelay(pdMS_TO_TICKS(SPEED_MS)); 
+    }
     }
 }

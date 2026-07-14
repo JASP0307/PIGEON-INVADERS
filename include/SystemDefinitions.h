@@ -149,6 +149,12 @@ extern Preferences preferences;
 // Velocidad de movimiento de servos en ms
 extern int SPEED_MS;
 
+// Velocidad lenta para el primer movimiento home (suave)
+extern const int HOME_SPEED_MS;
+
+// Bandera para movimiento home inicial lento
+extern bool initialHomeMovement;
+
 // =================================================================
 // HANDLES FreeRTOS (definidos en main.cpp)
 // =================================================================

@@ -47,3 +47,24 @@ void cargarVelocidades() {
   
   Serial.printf("Velocidades cargadas: Intervalo %d minutos, Velocidad %d ms\n", MONITORING_INTERVAL_MS / 60000, SPEED_MS);
 }
+
+void guardarPosicionServos(int x, int y) {
+  preferences.begin("servoPos", false);
+  preferences.putInt("lastX", x);
+  preferences.putInt("lastY", y);
+  preferences.end();
+}
+
+int cargarPosicionServosX() {
+  preferences.begin("servoPos", true);
+  int val = preferences.getInt("lastX", 90);
+  preferences.end();
+  return val;
+}
+
+int cargarPosicionServosY() {
+  preferences.begin("servoPos", true);
+  int val = preferences.getInt("lastY", 90);
+  preferences.end();
+  return val;
+}

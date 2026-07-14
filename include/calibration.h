@@ -7,5 +7,8 @@
 void guardarCalibracion(int areaIndex);
 void cargarCalibraciones();
 void cargarVelocidades();
+void guardarPosicionServos(int x, int y);
+int cargarPosicionServosX();
+int cargarPosicionServosY();
 
 #endif // CALIBRATION_H
